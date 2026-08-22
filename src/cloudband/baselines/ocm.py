@@ -16,12 +16,18 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import numpy as np
+from numpy.typing import NDArray
+
 PINNED_VERSION = "1.7.0"
 
 # Weight set the package ships. The default is the newest available, which is
 # not the one the published paper values were produced with.
 LATEST_MODEL_VERSION = 4.0
 PAPER_MODEL_VERSION = 1.0
+
+# The models take red, green and near-infrared, in that order.
+EXPECTED_CHANNELS = 3
 
 
 @dataclass(frozen=True)
@@ -87,6 +93,29 @@ def validate_kwargs(function: Callable[..., Any], kwargs: dict[str, Any]) -> dic
 def prediction_directory(root: Path, version: str | None = None) -> Path:
     """Return the version scoped directory predictions are written to."""
     return root / f"ocm_preds_v{version or package_version()}"
+
+
+def predict_array(
+    stack: NDArray[np.floating] | NDArray[np.integer],
+    config: InferenceConfig | None = None,
+) -> NDArray[np.integer]:
+    """Run inference on one in-memory red, green, NIR stack.
+
+    The stack must hold exactly three channels in that order. The returned mask
+    carries the four class codes the package emits.
+    """
+    from omnicloudmask import predict_from_array
+
+    if stack.ndim != 3 or stack.shape[0] != EXPECTED_CHANNELS:
+        raise ValueError(
+            f"expected a ({EXPECTED_CHANNELS}, height, width) red-green-NIR stack, "
+            f"got {stack.shape}"
+        )
+
+    settings = config or InferenceConfig()
+    kwargs = validate_kwargs(predict_from_array, settings.as_kwargs())
+    mask = predict_from_array(stack, **kwargs)
+    return np.asarray(mask).squeeze()
 
 
 def predict_scenes(
