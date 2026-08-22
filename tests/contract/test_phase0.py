@@ -116,16 +116,6 @@ def test_run_reports_progress(monkeypatch) -> None:
     assert seen == [(1, 2), (2, 2)]
 
 
-def test_compare_to_reference_shows_difference(monkeypatch) -> None:
-    samples = [dataset.Sample("scene_0", band_stack([1, 1, 1, 1]), annotation([0, 1, 2, 3]))]
-    monkeypatch.setattr(dataset, "iter_samples", fake_iterator(samples))
-
-    result = phase0.run(make_table(1), constant_predictor([0, 1, 1, 3]), "ocm-test")
-    frame = phase0.compare_to_reference(result, {"clear": 90.0, "cloud": 90.0})
-    assert list(frame.columns) == ["observed", "reference", "difference"]
-    assert frame.loc["clear", "difference"] == pytest.approx(frame.loc["clear", "observed"] - 90.0)
-
-
 def test_save_writes_every_artefact(monkeypatch, tmp_path: Path) -> None:
     samples = [dataset.Sample("scene_0", band_stack([1, 1, 1, 1]), annotation([0, 1, 2, 3]))]
     monkeypatch.setattr(dataset, "iter_samples", fake_iterator(samples))
@@ -151,3 +141,54 @@ def test_saved_confusion_matches_pooled(monkeypatch, tmp_path: Path) -> None:
     paths = phase0.save(result, tmp_path)
     counts = pd.read_csv(paths["confusion"], index_col=0)
     assert counts.loc["cloud", "tp"] == result.pooled["cloud"].tp
+
+
+def test_reference_requires_a_dataset() -> None:
+    with pytest.raises(ValueError, match="must name the dataset"):
+        phase0.Reference(name="somewhere", dataset_id="", boa={"cloud": 90.0})
+
+
+def test_reference_rejects_unknown_experiments() -> None:
+    with pytest.raises(ValueError, match="unknown experiments"):
+        phase0.Reference(name="r", dataset_id="d", boa={"haze": 90.0})
+
+
+def test_published_references_name_their_datasets() -> None:
+    published = (
+        phase0.PIXBOX_S2_PAPER,
+        phase0.PIXBOX_S2_V1_7_0,
+        phase0.PIXBOX_L8_PAPER,
+        phase0.STUPMASK_CLOUDSEN12,
+    )
+    assert all(reference.dataset_id for reference in published)
+    assert phase0.PIXBOX_S2_PAPER.dataset_id == phase0.PIXBOX_S2
+    assert phase0.STUPMASK_CLOUDSEN12.dataset_id == phase0.CLOUDSEN12_TEST
+    assert set(phase0.STUPMASK_CLOUDSEN12.boa) == {"cloud"}
+
+
+def test_same_dataset_comparison_is_a_fidelity_check(monkeypatch) -> None:
+    samples = [dataset.Sample("scene_0", band_stack([1, 1, 1, 1]), annotation([0, 1, 2, 3]))]
+    monkeypatch.setattr(dataset, "iter_samples", fake_iterator(samples))
+
+    result = phase0.run(make_table(1), constant_predictor([0, 1, 1, 3]), "ocm-test")
+    reference = phase0.Reference(
+        name="same place", dataset_id=result.dataset_id, boa={"clear": 90.0}
+    )
+    frame = phase0.compare_to_reference(result, reference)
+    assert list(frame.columns) == ["observed", "reference", "difference", "same_dataset"]
+    assert bool(frame["same_dataset"].all())
+    assert "fidelity check" in phase0.describe_comparison(frame)
+    assert frame.loc["clear", "difference"] == pytest.approx(frame.loc["clear", "observed"] - 90.0)
+
+
+def test_cross_dataset_comparison_is_flagged(monkeypatch) -> None:
+    """A PixBox reference against a CloudSEN12+ run is not a fidelity check."""
+    samples = [dataset.Sample("scene_0", band_stack([1, 1, 1, 1]), annotation([0, 1, 2, 3]))]
+    monkeypatch.setattr(dataset, "iter_samples", fake_iterator(samples))
+
+    result = phase0.run(make_table(1), constant_predictor([0, 1, 1, 3]), "ocm-test")
+    frame = phase0.compare_to_reference(result, phase0.PIXBOX_S2_V1_7_0)
+    assert not bool(frame["same_dataset"].any())
+    description = phase0.describe_comparison(frame)
+    assert "cross-dataset" in description
+    assert "does not measure reproduction fidelity" in description

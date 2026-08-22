@@ -43,6 +43,9 @@ OCM uses B8A at 864.5 nm while STUPmask most likely uses B08 at 840 nm. These ar
 R-G-NIR combinations among the 286, each canonised by a different paper. Track both separately
 in the ranking.
 
+Zero-based positions in the CloudSEN12+ L1C stack: B04 is 3, B03 is 2, B8A is 8. Verified
+against the band table in the collection card and pinned in `pipelines/phase0.py`.
+
 ## Training data
 
 Section 2.3: CloudSEN12, splits of 8,490 train / 535 validation / 975 test. Each patch ships at
@@ -57,6 +60,10 @@ validation patches.
 | Normalisation | Dynamic Z-score: mean and standard deviation per input and per channel |
 | No-data | Excluded from the statistics, then set to zero |
 | Mixed resolution | Random per-batch resampling, 9 m (565 px) to 50 m (102 px), bilinear |
+
+The paper never mentions 512. That figure belongs to two other places: STUPmask resizes 509 to
+512 by bilinear interpolation because Swin needs dimensions divisible by 32, and CloudSEN12+
+stores patches on a 512 canvas padded with zeros on the left and bottom sides.
 
 Section 2.2 justifies mixed resolution by the ability of CNN based models to process arbitrary
 input sizes. Swin is not a CNN. See ADR-0023, which narrows the range to 9-22 m for both
@@ -95,20 +102,26 @@ recorded with every result.
 
 | Parameter | Package default | Effect |
 | --- | --- | --- |
-| `patch_size` | 1000 | Context available per patch |
-| `patch_overlap` | 300 | Borders reconciled by gradient merging |
+| `patch_size` | 1000 | Tile size a large scene is split into before inference |
+| `patch_overlap` | 300 | Borders of overlapping tiles reconciled by gradient merging |
 | `inference_dtype` | float32 | Changes marginal pixels |
 | `model_version` | latest available | Distinct weight sets |
 | Ensemble | Two models | Disabling changes the result |
+
+Tiling is a separate mechanism from the mixed resolution resampling used during training. The
+defaults suit a full Sentinel-2 scene of 10,980 px and have no effect on a 509 px patch, which
+fits in a single tile: the package reduces them to 509 and 254 and emits a warning. Passing
+`patch_size=509, patch_overlap=0` for CloudSEN12+ patches produces the same result and lets the
+manifest record what actually ran.
 
 Model versions 1.0 to 3.0 require fastai to be installed. Version 1.0 produced the values
 reported in the paper.
 
 ## Fidelity targets
 
-Two distinct references, both verifiable.
+Two distinct references, both verifiable, both measured on PixBox Sentinel-2.
 
-Paper, PixBox Sentinel-2, Table A.1:
+Paper, Table A.1:
 
 | Class | TP | TN | FP | FN | BOA |
 | --- | --- | --- | --- | --- | --- |
@@ -133,6 +146,39 @@ pixels. That total confirms the Zenodo record against the 20,500 cited by CMIX.
 
 All fifteen matrices are parametrised cases in `tests/contract/test_metrics.py`.
 
+The paper reports results on three test sets only: PixBox Sentinel-2, PixBox Landsat 8 and a
+PlanetScope collection of 5,223 hand-labelled pixels at 96.9 / 98.8 / 97.4. All three sit
+outside the training domain, which is what the sensor-agnostic claim rests on.
+
+No result is published on the CloudSEN12 test split, because CloudSEN12 is the training set. A
+CloudSEN12+ run therefore has no published target and cannot be a fidelity check. It measures
+in-domain performance, which nobody has reported.
+
+Fidelity against the published values requires PixBox and nothing else. It needs the 29
+Sentinel-2 L1C products the pixel indices address.
+
+## In-domain baseline on CloudSEN12+
+
+Measured with package 1.7.0, latest weights, over the 975 test patches of the high quality p509
+subset, 252,603,975 pixels. The three reference classes partition the pixels exactly.
+
+| Class | TP | TN | FP | FN | Sensitivity | Specificity | BOA |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clear | 127,851,868 | 110,577,526 | 8,067,248 | 6,107,333 | 95.44 | 93.20 | 94.32 |
+| cloud | 87,421,283 | 150,704,234 | 7,383,521 | 7,094,937 | 92.49 | 95.33 | 93.91 |
+| shadow | 18,682,841 | 225,278,207 | 3,197,214 | 5,445,713 | 77.43 | 98.60 | 88.02 |
+
+Reference composition: 53.03 % clear, 37.42 % cloud, 9.55 % shadow.
+
+Shadow fails by omission, not by false alarm: specificity 98.60 against sensitivity 77.43. The
+paper reports the same asymmetry on its own test sets, describing producer accuracy for shadow
+as a relative weak point driven by false negatives. The behaviour reproduces on a different
+collection.
+
+Against the PixBox values the differences are +1.90, +2.39 and +6.65 percentage points. These
+are not improvements: CloudSEN12 is inside the training domain and PixBox is not, and the
+populations differ in geography and class balance.
+
 ## PixBox labels
 
 Two independent integer attributes. A pixel can be both cloud and cloud shadow.
@@ -153,6 +199,26 @@ which the CSV does not; that mapping is the acquisition manifest.
 
 Landsat 8 class ids are unverified. See `docs/OPEN_ISSUES.md`.
 
+## CloudSEN12+ labels
+
+Dense and exclusive: every pixel carries one of clear 0, thick cloud 1, thin cloud 2, cloud
+shadow 3. Unlike PixBox, cloud and shadow never overlap. The reserved value 99 marks no data and
+appears in scribble and nolabel patches.
+
+The class codes were confirmed against OCM predictions on two patches, one dominated by thin
+cloud and one by shadow. Reference and prediction agree within 1.9 % and 2.4 % of pixels
+respectively and identify the same dominant class, which no misaligned coding would produce.
+
+The high quality p509 subset holds exactly 8,490 train, 975 test and 535 validation patches over
+2,000 ROIs, five patches each. Every ROI sits entirely within one split, so the published split
+carries no spatial leakage between train and test. Grouped cross-validation is still required
+within a split.
+
+Balanced accuracy is undefined for a class absent from a scene, since specificity has no
+denominator. Across the 975 test patches the annotator percentages imply 705 scenes with a
+defined clear value, 767 for cloud and 655 for shadow. A paired test runs on those counts, not
+on 975.
+
 ## Statistical caveat from the authors
 
 Section 4 states that the test datasets were not generated through a probability sampling
@@ -160,8 +226,8 @@ design, which prevents computing the variance of the performance estimates and l
 statistical comparison between models.
 
 Consequence: PixBox numbers are descriptive only, with no Wilcoxon test. Inferential comparison
-is restricted to the CloudSEN12+ test split, where the scene is a well defined unit and there
-are 975 pairs. Project note 2.10 is scoped accordingly.
+is restricted to the CloudSEN12+ test split, where the scene is a well defined unit, subject to
+the pairable counts above.
 
 The authors note that a global, multi-sensor test set built on a probability sampling design
 following Stehman and Foody (2019) remains a gap in the literature.

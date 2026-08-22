@@ -16,6 +16,7 @@ from numpy.typing import NDArray
 
 from cloudband.datasets import cloudsen12 as dataset
 from cloudband.eval.confusion import BinaryConfusion
+from cloudband.eval.experiments import EXPERIMENTS
 from cloudband.eval.metrics import balanced_overall_accuracy
 from cloudband.eval.report import as_percentages, to_frame
 from cloudband.pipelines import cloudsen12 as scoring
@@ -28,6 +29,59 @@ GREEN_INDEX = 2
 NIR_INDEX = 8
 RGN_INDICES: tuple[int, int, int] = (RED_INDEX, GREEN_INDEX, NIR_INDEX)
 RGN_BANDS: tuple[str, str, str] = ("B04", "B03", "B8A")
+
+
+@dataclass(frozen=True)
+class Reference:
+    """A published result, tied to the dataset it was measured on.
+
+    The dataset is required because a difference against a value measured
+    elsewhere is not a fidelity check. Comparing across datasets is allowed but
+    has to be stated, not assumed.
+    """
+
+    name: str
+    dataset_id: str
+    boa: dict[str, float]
+    note: str = ""
+
+    def __post_init__(self) -> None:
+        if not self.dataset_id:
+            raise ValueError("a reference must name the dataset it was measured on")
+        unknown = sorted(set(self.boa) - set(EXPERIMENTS))
+        if unknown:
+            raise ValueError(f"unknown experiments in reference: {unknown}")
+
+
+CLOUDSEN12_TEST = "cloudsen12plus_test_p509_high"
+PIXBOX_S2 = "pixbox_s2"
+
+# Published results, each tied to the dataset it was measured on.
+PIXBOX_S2_PAPER = Reference(
+    name="OmniCloudMask paper, Table A.1",
+    dataset_id=PIXBOX_S2,
+    boa={"clear": 92.2, "cloud": 91.2, "shadow": 80.5},
+    note="produced with model version 1.0, which requires fastai",
+)
+
+PIXBOX_S2_V1_7_0 = Reference(
+    name="OmniCloudMask reference notebook, package 1.7.0",
+    dataset_id=PIXBOX_S2,
+    boa={"clear": 92.42, "cloud": 91.52, "shadow": 81.37},
+)
+
+PIXBOX_L8_PAPER = Reference(
+    name="OmniCloudMask paper, Table A.2",
+    dataset_id="pixbox_l8",
+    boa={"clear": 91.5, "cloud": 91.5, "shadow": 75.2},
+)
+
+STUPMASK_CLOUDSEN12 = Reference(
+    name="STUPmask paper, section 4.4.1",
+    dataset_id=CLOUDSEN12_TEST,
+    boa={"cloud": 93.64},
+    note="binary model on CloudSEN12, not CloudSEN12+; see DIVERGENCES D1 and D5",
+)
 
 
 @dataclass(frozen=True)
@@ -78,7 +132,7 @@ def run(
     table: pd.DataFrame,
     predict: Callable[[NDArray[np.integer]], NDArray[np.integer]],
     model_id: str,
-    dataset_id: str = "cloudsen12plus_test_p509_high",
+    dataset_id: str = CLOUDSEN12_TEST,
     limit: int | None = None,
     progress: Callable[[int, int], None] | None = None,
 ) -> RunResult:
@@ -106,17 +160,39 @@ def run(
     )
 
 
-def compare_to_reference(result: RunResult, reference: dict[str, float]) -> pd.DataFrame:
-    """Put pooled BOA next to a published reference and show the difference."""
-    observed = {name: result.scores.loc[name, "boa"] for name in reference}
+def compare_to_reference(result: RunResult, reference: Reference) -> pd.DataFrame:
+    """Put pooled BOA next to a published reference and show the difference.
+
+    A reference measured on another dataset yields a comparable column set but
+    the difference does not measure reproduction fidelity. The returned frame
+    carries a same_dataset column so a report cannot silently conflate the two.
+    """
+    same_dataset = reference.dataset_id == result.dataset_id
+    observed = {name: result.scores.loc[name, "boa"] for name in reference.boa}
     frame = pd.DataFrame(
         {
             "observed": pd.Series(observed),
-            "reference": pd.Series(reference),
+            "reference": pd.Series(reference.boa),
         }
     )
     frame["difference"] = frame["observed"] - frame["reference"]
+    frame["same_dataset"] = same_dataset
+    frame.attrs["reference_name"] = reference.name
+    frame.attrs["reference_dataset"] = reference.dataset_id
+    frame.attrs["note"] = reference.note
     return frame
+
+
+def describe_comparison(frame: pd.DataFrame) -> str:
+    """One line stating what the comparison in a frame actually measures."""
+    name = frame.attrs.get("reference_name", "unknown reference")
+    dataset_id = frame.attrs.get("reference_dataset", "unknown dataset")
+    if bool(frame["same_dataset"].all()):
+        return f"fidelity check against {name}, measured on {dataset_id}"
+    return (
+        f"cross-dataset comparison against {name}, measured on {dataset_id}; "
+        "the difference does not measure reproduction fidelity"
+    )
 
 
 def save(
