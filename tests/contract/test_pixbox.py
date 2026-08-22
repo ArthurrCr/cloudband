@@ -18,6 +18,8 @@ from cloudband.labels.pixbox import (
     COLUMN_COLUMN,
     EXPECTED_CLOUD_SHADOW_OVERLAP,
     EXPECTED_LABEL_COUNTS,
+    EXPECTED_SCORABLE_PIXELS,
+    EXPECTED_UNAVAILABLE_PIXELS,
     NOT_CLOUD_IDS,
     NOT_SHADOW_IDS,
     PRODUCT_COLUMN,
@@ -26,10 +28,13 @@ from cloudband.labels.pixbox import (
     SHADOW_COLUMN,
     SHADOW_IDS,
     TOTAL_PIXELS,
+    UNAVAILABLE_PRODUCT_IDS,
     cloud_shadow_overlap,
+    drop_unavailable_scenes,
     label_counts,
     label_masks,
     sample_predictions,
+    unavailable_pixel_counts,
     verify_label_counts,
 )
 
@@ -157,3 +162,34 @@ def test_experiments_run_on_overlapping_reference_labels() -> None:
     assert confusions["cloud"].tp == 1
     assert confusions["cloud"].fn == 1
     assert confusions["shadow"].fn == 1
+
+
+def test_unavailable_scene_is_declared() -> None:
+    """One product is listed in the definitions but absent from the archive."""
+    assert sorted(UNAVAILABLE_PRODUCT_IDS) == [872013732]
+    assert EXPECTED_UNAVAILABLE_PIXELS == 550
+    assert EXPECTED_SCORABLE_PIXELS == TOTAL_PIXELS - EXPECTED_UNAVAILABLE_PIXELS
+    assert EXPECTED_SCORABLE_PIXELS == 16801
+
+
+def test_unavailable_scene_pixels_are_dropped() -> None:
+    table = build_table([(6, 3), (0, 0)])
+    table[PRODUCT_COLUMN] = [872013732, next(iter(PRODUCT_ID_TO_SCENE))]
+    kept = drop_unavailable_scenes(table)
+    assert len(kept) == 1
+    assert 872013732 not in set(kept[PRODUCT_COLUMN])
+
+
+def test_dropped_pixels_are_counted_per_class() -> None:
+    table = build_table([(6, 3), (0, 3), (0, 0)])
+    table[PRODUCT_COLUMN] = [872013732, 872013732, next(iter(PRODUCT_ID_TO_SCENE))]
+    counts = unavailable_pixel_counts(table)
+    assert counts["total"] == 2
+    assert counts["cloud"] == 1
+    assert counts["shadow"] == 2
+
+
+def test_no_scenes_dropped_when_none_unavailable() -> None:
+    table = build_table([(0, 0)])
+    assert unavailable_pixel_counts(table)["total"] == 0
+    assert len(drop_unavailable_scenes(table)) == 1

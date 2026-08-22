@@ -37,6 +37,14 @@ EXPECTED_LABEL_COUNTS: dict[str, int] = {
 # Pixels labelled both cloud and cloud shadow.
 EXPECTED_CLOUD_SHADOW_OVERLAP = 361
 
+# Declared in the collection definitions but absent from the scene archive
+# published in the same Zenodo record. Its pixels cannot be scored.
+# See docs/protocols/DIVERGENCES.md D11.
+UNAVAILABLE_PRODUCT_IDS: frozenset[int] = frozenset({872013732})
+
+EXPECTED_UNAVAILABLE_PIXELS = 550
+EXPECTED_SCORABLE_PIXELS = TOTAL_PIXELS - EXPECTED_UNAVAILABLE_PIXELS
+
 PRODUCT_ID_TO_SCENE: dict[int, str] = {
     5472572: "S2A_MSIL1C_20171205T143751_N0206_R096_T19KEU_20171205T180316",
     183807605: "S2A_MSIL1C_20170929T211511_N0205_R143_T06VWN_20170929T211510",
@@ -131,6 +139,32 @@ def verify_label_counts(table: pd.DataFrame) -> dict[str, int]:
     if len(table) != TOTAL_PIXELS:
         differences["total"] = len(table) - TOTAL_PIXELS
     return differences
+
+
+def drop_unavailable_scenes(
+    table: pd.DataFrame, product_ids: frozenset[int] = UNAVAILABLE_PRODUCT_IDS
+) -> pd.DataFrame:
+    """Remove pixels belonging to scenes whose imagery is not published.
+
+    The published reference values were computed over the full collection, so a
+    result excluding these pixels is measured on a different population.
+    """
+    require_columns(table)
+    keep = ~table[PRODUCT_COLUMN].isin(product_ids)
+    return table.loc[keep].copy()
+
+
+def unavailable_pixel_counts(
+    table: pd.DataFrame, product_ids: frozenset[int] = UNAVAILABLE_PRODUCT_IDS
+) -> dict[str, int]:
+    """Count the pixels lost per evaluation class, for the run manifest."""
+    require_columns(table)
+    dropped = table.loc[table[PRODUCT_COLUMN].isin(product_ids)]
+    if dropped.empty:
+        return {"total": 0, "clear": 0, "cloud": 0, "shadow": 0}
+    masks = label_masks(dropped)
+    counts = label_counts(masks)
+    return {"total": len(dropped), **counts}
 
 
 def sample_predictions(table: pd.DataFrame, prediction: NDArray[np.integer]) -> NDArray[np.integer]:

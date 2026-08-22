@@ -22,14 +22,22 @@ PREDICTION_COLUMN = "predicted_class"
 EXPECTED_SCENE_SIZE = 10980
 
 
-def load_reference(csv_path: Path, verify: bool = True) -> pd.DataFrame:
-    """Read the label table and optionally check it against the reference counts."""
+def load_reference(
+    csv_path: Path, verify: bool = True, drop_unavailable: bool = True
+) -> pd.DataFrame:
+    """Read the label table, check it, and drop scenes whose imagery is absent.
+
+    Verification runs against the full collection before any scene is dropped,
+    so a corrupted file is still caught.
+    """
     table = pd.read_csv(csv_path)
     pixbox.require_columns(table)
     if verify:
         differences = pixbox.verify_label_counts(table)
         if differences:
             raise ValueError(f"label counts differ from the reference collection: {differences}")
+    if drop_unavailable:
+        table = pixbox.drop_unavailable_scenes(table)
     return table
 
 

@@ -19,6 +19,7 @@ Status values: `open`, `resolved`.
 | D8 | OmniCloudMask B8A selection rationale | resolved |
 | D9 | OmniCloudMask published values versus current weights | resolved |
 | D10 | Overall accuracy typo in the OmniCloudMask equations | resolved |
+| D11 | PixBox Sentinel-2 scene declared but not published | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -167,3 +168,28 @@ Equation 3 is printed as `OA = (TP + FN) / (TP + TN + FP + FN)`. The numerator s
 
 Both papers carry a typographical error in their metrics section, so printed formulas are not a
 sufficient reference for implementation.
+
+## D11. PixBox Sentinel-2 scene declared but not published
+
+Status: resolved. 28 of the 29 declared scenes are available.
+
+The `pixbox_sentinel2_cmix_20180425_definitions.txt` file lists 29 Sentinel-2 products, and the
+label CSV holds 17,351 pixels drawn from all 29. The `Sentinel-2_L1C.zip` archive published in
+the same Zenodo record (10.5281/zenodo.5036991) contains 28. The absent product is
+`S2A_MSIL1C_20180223T092031_N0206_R093_T36VUM_20180223T113049`, PRODUCT_ID 872013732.
+
+Established by listing the archive index remotely and comparing against the product table in
+the definitions file. No extra scenes are present, so the archive is a strict subset.
+
+Its 550 pixels are 3.17 % of the collection, but they are not spread evenly across classes:
+346 cloud pixels, 4.24 % of all cloud, and 82 shadow pixels, 6.58 % of all shadow.
+
+Consequence for fidelity. The published confusion matrices sum to 17,351, so the reference
+values were computed over all 29 scenes, from a source other than this archive. A run on the
+28 available scenes is measured over 16,801 pixels and cannot match exactly. The gap is bounded:
+recomputing the published shadow matrix with the 82 pixels counted first as all correct and
+then as all incorrect moves BOA from 80.46 to 81.62 or to 78.53. A deviation inside that band
+does not distinguish a pipeline error from the absent scene.
+
+`labels/pixbox.py` declares the product id, drops its pixels, and records the per-class loss in
+the run manifest.
