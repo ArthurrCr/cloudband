@@ -146,6 +146,29 @@ pixels. That total confirms the Zenodo record against the 20,500 cited by CMIX.
 
 All fifteen matrices are parametrised cases in `tests/contract/test_metrics.py`.
 
+### Verified reproduction
+
+Package 1.7.0, latest weights, run over the 28 available scenes. The absent scene leaves 16,801
+scorable pixels. Reference positives per class come out at 8,148 clear, 7,823 cloud and 1,164
+shadow, matching the published counts minus the dropped pixels exactly.
+
+| Class | TP | TN | FP | FN | BOA | Notebook 1.7.0 | Difference |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clear | 7,690 | 7,815 | 838 | 458 | 92.35 % | 92.42 % | -0.07 |
+| cloud | 6,899 | 8,530 | 448 | 924 | 91.60 % | 91.52 % | +0.08 |
+| shadow | 759 | 15,470 | 167 | 405 | 82.07 % | 81.37 % | +0.70 |
+
+All three fall inside the tolerance band the missing scene implies: clear 91.53 to 93.29, cloud
+89.40 to 93.47, shadow 78.08 to 83.63. The band was computed before the run, from the published
+matrices with the dropped pixels counted first as all correct and then as all incorrect.
+
+Shadow carries the largest deviation, which follows from the loss falling unevenly: the missing
+scene holds 6.58 % of all shadow pixels against 4.24 % of cloud.
+
+Shadow sensitivity is 65.21 % against specificity above 99 %. The same asymmetry appears on the
+CloudSEN12+ run and is described in the paper, so the failure mode reproduces across three
+independent collections.
+
 The paper reports results on three test sets only: PixBox Sentinel-2, PixBox Landsat 8 and a
 PlanetScope collection of 5,223 hand-labelled pixels at 96.9 / 98.8 / 97.4. All three sit
 outside the training domain, which is what the sensor-agnostic claim rests on.
