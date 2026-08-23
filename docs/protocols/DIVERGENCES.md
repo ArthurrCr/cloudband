@@ -20,6 +20,7 @@ Status values: `open`, `resolved`.
 | D9 | OmniCloudMask published values versus current weights | resolved |
 | D10 | Overall accuracy typo in the OmniCloudMask equations | resolved |
 | D11 | PixBox Sentinel-2 scene declared but not published | resolved |
+| D12 | The two PixBox collections use incompatible schemas | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -68,9 +69,9 @@ The STUPmask paper, section 4.4.1, reports 20,500 pixels, citing Paperin et al. 
 Zenodo record for that dataset, version 1.0, gives 18,830 from the same 11 products. The
 OmniCloudMask paper, section 2.4.2, also gives 18,830.
 
-Established by arithmetic: every row of OmniCloudMask Table A.2 sums to exactly 18,830 across
-TP, TN, FP and FN, for all three classes and all three methods. Those matrices could not sum to
-that figure if the collection held 20,500 pixels.
+Established directly: the distributed CSV `pixbox_landsat8_cmix_20150527.csv` holds 18,830 rows,
+and its per-product counts sum to the same figure across all 11 products. Every row of
+OmniCloudMask Table A.2 sums to 18,830 as well.
 
 The 20,500 figure is either an error or refers to a superseded release.
 
@@ -197,3 +198,28 @@ the run manifest.
 Outcome. A run over the 28 available scenes reproduces the reference values within -0.07, +0.08
 and +0.70 percentage points for clear, cloud and shadow, all inside the predicted band. The
 absent scene therefore accounts for the residual difference and no pipeline error is implied.
+
+## D12. The two PixBox collections use incompatible schemas
+
+Status: resolved. Each collection needs its own label module.
+
+The Sentinel-2 collection, compiled in 2018, encodes cloud presence in
+`CLOUD_CHARACTERISTICS_ID` over thirteen classes, and shadow in `SHADOW_ID` over five,
+separating topographic shadow and shadow above cloud from cloud shadow.
+
+The Landsat 8 collection, compiled in 2015, encodes cloud presence in `PIXEL_SURFACE_TYPE_ID`
+over fourteen classes, and shadow in `CLOUD_SHADOW_ID` as a plain flag with no distinction
+between shadow kinds.
+
+The hazard is the shared column name. `CLOUD_CHARACTERISTICS_ID` exists in both, but in the
+Landsat collection it encodes cloud type rather than presence, holding 17,368 zeros and 1,462
+cirrus pixels. Reading it as the Sentinel-2 column would map 1,462 pixels as the entire cloud
+class instead of 5,478, and nothing downstream would flag it.
+
+Both mappings are verified against the OmniCloudMask confusion matrices: cloud comes out at
+8,169 and shadow at 1,246 for Sentinel-2, and 5,478 and 1,396 for Landsat 8, matching TP plus FN
+in Tables A.1 and A.2 exactly.
+
+A further consequence for interpretation: shadow is measured slightly differently across the two
+collections, since only the Sentinel-2 table excludes topographic shadow from the negative class
+explicitly.

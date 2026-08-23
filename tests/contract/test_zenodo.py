@@ -38,7 +38,7 @@ def test_archive_urls_point_at_the_record() -> None:
 
 def test_archive_holds_28_of_the_29_declared_scenes() -> None:
     """One declared product is absent from the archive. See DIVERGENCES D11."""
-    from cloudband.labels.pixbox import PRODUCT_ID_TO_SCENE, UNAVAILABLE_PRODUCT_IDS
+    from cloudband.labels.pixbox_s2 import PRODUCT_ID_TO_SCENE, UNAVAILABLE_PRODUCT_IDS
 
     declared = len(PRODUCT_ID_TO_SCENE)
     unavailable = len(UNAVAILABLE_PRODUCT_IDS)

@@ -12,7 +12,7 @@ import pytest
 from cloudband.baselines.ocm import InferenceConfig, prediction_directory, validate_kwargs
 from cloudband.eval.experiments import pool
 from cloudband.eval.report import as_percentages, compare, to_frame
-from cloudband.labels import pixbox
+from cloudband.labels import pixbox_s2
 from cloudband.pipelines import pixbox_s2
 from cloudband.provenance.manifest import build_manifest, file_digest
 
@@ -22,11 +22,11 @@ SCENE_SIZE = 8
 def build_table(product_ids: list[int], rows: list[int], columns: list[int]) -> pd.DataFrame:
     return pd.DataFrame(
         {
-            pixbox.CLOUD_COLUMN: [6, 0, 0][: len(rows)],
-            pixbox.SHADOW_COLUMN: [3, 3, 0][: len(rows)],
-            pixbox.PRODUCT_COLUMN: product_ids,
-            pixbox.ROW_COLUMN: rows,
-            pixbox.COLUMN_COLUMN: columns,
+            pixbox_s2.CLOUD_COLUMN: [6, 0, 0][: len(rows)],
+            pixbox_s2.SHADOW_COLUMN: [3, 3, 0][: len(rows)],
+            pixbox_s2.PRODUCT_COLUMN: product_ids,
+            pixbox_s2.ROW_COLUMN: rows,
+            pixbox_s2.COLUMN_COLUMN: columns,
         }
     )
 
@@ -100,8 +100,8 @@ def test_missing_prediction_is_reported(tmp_path: Path) -> None:
 
 
 def test_attach_and_score_round_trip(tmp_path: Path) -> None:
-    product_id = next(iter(pixbox.PRODUCT_ID_TO_SCENE))
-    scene_name = pixbox.PRODUCT_ID_TO_SCENE[product_id]
+    product_id = next(iter(pixbox_s2.PRODUCT_ID_TO_SCENE))
+    scene_name = pixbox_s2.PRODUCT_ID_TO_SCENE[product_id]
     prediction = np.zeros((SCENE_SIZE, SCENE_SIZE), dtype=np.uint8)
     prediction[1, 2] = 1
     prediction[3, 4] = 3
@@ -124,14 +124,14 @@ def test_unknown_product_id_is_rejected(tmp_path: Path) -> None:
 
 
 def test_score_requires_attached_predictions() -> None:
-    table = build_table([next(iter(pixbox.PRODUCT_ID_TO_SCENE))], [0], [0])
+    table = build_table([next(iter(pixbox_s2.PRODUCT_ID_TO_SCENE))], [0], [0])
     with pytest.raises(ValueError, match="call attach_predictions first"):
         pixbox_s2.score(table)
 
 
 def test_pooled_counts_equal_whole_collection(tmp_path: Path) -> None:
-    product_id = next(iter(pixbox.PRODUCT_ID_TO_SCENE))
-    scene_name = pixbox.PRODUCT_ID_TO_SCENE[product_id]
+    product_id = next(iter(pixbox_s2.PRODUCT_ID_TO_SCENE))
+    scene_name = pixbox_s2.PRODUCT_ID_TO_SCENE[product_id]
     prediction = np.zeros((SCENE_SIZE, SCENE_SIZE), dtype=np.uint8)
     write_prediction(tmp_path, scene_name, prediction)
     table = build_table([product_id] * 3, [1, 3, 0], [2, 4, 0])
