@@ -38,7 +38,7 @@ def test_archive_urls_point_at_the_record() -> None:
 
 def test_archive_holds_28_of_the_29_declared_scenes() -> None:
     """One declared product is absent from the archive. See DIVERGENCES D11."""
-    from cloudband.labels.pixbox_s2 import PRODUCT_ID_TO_SCENE, UNAVAILABLE_PRODUCT_IDS
+    from cloudband.labels.pixbox import PRODUCT_ID_TO_SCENE, UNAVAILABLE_PRODUCT_IDS
 
     declared = len(PRODUCT_ID_TO_SCENE)
     unavailable = len(UNAVAILABLE_PRODUCT_IDS)
@@ -145,3 +145,23 @@ def test_download_skips_a_complete_file(tmp_path: Path, monkeypatch) -> None:
 
     monkeypatch.setattr(zenodo.subprocess, "run", fail)
     assert zenodo.download(archive, tmp_path).name == "small.zip"
+
+
+def test_landsat_archives_point_at_their_own_record() -> None:
+    assert zenodo.L8_RECORD_ID == "5040271"
+    assert zenodo.L8_RECORD_ID in zenodo.L8_SCENES.url
+    assert zenodo.L8_SCENES.url.endswith("Landsat8_L1.zip?download=1")
+    assert zenodo.L8_LABELS.url.endswith("PixBox-L8-CMIX.zip?download=1")
+
+
+def test_landsat_class_table_is_named_descriptions() -> None:
+    """The Sentinel-2 collection calls the same file definitions."""
+    assert zenodo.L8_DESCRIPTIONS.endswith("_descriptions.txt")
+    assert zenodo.DEFINITIONS.endswith("_definitions.txt")
+
+
+def test_landsat_archive_holds_every_declared_scene() -> None:
+    from cloudband.labels.pixbox_l8 import PRODUCT_ID_TO_SCENE
+
+    declared = len(PRODUCT_ID_TO_SCENE)
+    assert declared == zenodo.L8_SCENES_IN_ARCHIVE

@@ -12,8 +12,11 @@ import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
-RECORD_ID = "5036991"
-BASE_URL = f"https://zenodo.org/records/{RECORD_ID}/files"
+S2_RECORD_ID = "5036991"
+L8_RECORD_ID = "5040271"
+
+# Kept for callers written before the Landsat collection was added.
+RECORD_ID = S2_RECORD_ID
 
 LABELS_ARCHIVE = "PixBox-S2-CMIX.zip"
 SCENES_ARCHIVE = "Sentinel-2_L1C.zip"
@@ -21,27 +24,39 @@ SCENES_ARCHIVE = "Sentinel-2_L1C.zip"
 LABELS_CSV = "PixBox-S2-CMIX/pixbox_sentinel2_cmix_20180425.csv"
 DEFINITIONS = "PixBox-S2-CMIX/pixbox_sentinel2_cmix_20180425_definitions.txt"
 
+L8_LABELS_ARCHIVE = "PixBox-L8-CMIX.zip"
+L8_SCENES_ARCHIVE = "Landsat8_L1.zip"
+L8_LABELS_CSV = "PixBox-L8-CMIX/pixbox_landsat8_cmix_20150527.csv"
+
+# The Landsat collection names its class table descriptions, not definitions.
+L8_DESCRIPTIONS = "PixBox-L8-CMIX/pixbox_landsat8_cmix_20150527_descriptions.txt"
+
 SCENES_PREFIX = "Sentinel-2_L1C/"
 INNER_SUFFIX = ".SAFE.zip"
 
 SCENES_ARCHIVE_BYTES = 22000157118
 SCENES_IN_ARCHIVE = 28
+L8_SCENES_IN_ARCHIVE = 11
 
 
 @dataclass(frozen=True)
 class Archive:
-    """One downloadable file of the record."""
+    """One downloadable file of a Zenodo record."""
 
     filename: str
+    record_id: str = S2_RECORD_ID
     expected_bytes: int | None = None
 
     @property
     def url(self) -> str:
-        return f"{BASE_URL}/{self.filename}?download=1"
+        return f"https://zenodo.org/records/{self.record_id}/files/{self.filename}?download=1"
 
 
-LABELS = Archive(LABELS_ARCHIVE)
-SCENES = Archive(SCENES_ARCHIVE, expected_bytes=SCENES_ARCHIVE_BYTES)
+LABELS = Archive(LABELS_ARCHIVE, S2_RECORD_ID)
+SCENES = Archive(SCENES_ARCHIVE, S2_RECORD_ID, expected_bytes=SCENES_ARCHIVE_BYTES)
+
+L8_LABELS = Archive(L8_LABELS_ARCHIVE, L8_RECORD_ID)
+L8_SCENES = Archive(L8_SCENES_ARCHIVE, L8_RECORD_ID)
 
 
 def download(archive: Archive, target_dir: Path, connections: int = 16) -> Path:

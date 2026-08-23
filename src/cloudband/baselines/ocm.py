@@ -29,6 +29,26 @@ PAPER_MODEL_VERSION = 1.0
 # The models take red, green and near-infrared, in that order.
 EXPECTED_CHANNELS = 3
 
+SENTINEL2 = "sentinel2"
+LANDSAT8 = "landsat8"
+
+
+LOADER_NAMES: dict[str, str] = {SENTINEL2: "load_s2", LANDSAT8: "load_ls8"}
+
+
+def load_func(sensor: str) -> object:
+    """Return the package loader for a sensor, refusing unknown names."""
+    if sensor not in LOADER_NAMES:
+        raise ValueError(f"unknown sensor {sensor!r}; expected one of {sorted(LOADER_NAMES)}")
+
+    import omnicloudmask
+
+    name = LOADER_NAMES[sensor]
+    if not hasattr(omnicloudmask, name):
+        available = sorted(item for item in dir(omnicloudmask) if item.startswith("load_"))
+        raise AttributeError(f"omnicloudmask has no {name}; available loaders: {available}")
+    return getattr(omnicloudmask, name)
+
 
 @dataclass(frozen=True)
 class InferenceConfig:
@@ -122,16 +142,21 @@ def predict_scenes(
     scene_paths: list[Path],
     output_dir: Path,
     config: InferenceConfig | None = None,
+    sensor: str = SENTINEL2,
 ) -> list[Path]:
-    """Run inference over Sentinel-2 SAFE directories and return mask paths."""
-    from omnicloudmask import load_s2, predict_from_load_func
+    """Run inference over whole scenes and return the mask paths.
+
+    The loader differs per sensor: Sentinel-2 SAFE directories and Landsat 8
+    product directories are laid out differently and carry different band names.
+    """
+    from omnicloudmask import predict_from_load_func
 
     settings = config or InferenceConfig()
     output_dir.mkdir(parents=True, exist_ok=True)
     kwargs = validate_kwargs(predict_from_load_func, settings.as_kwargs())
     paths: list[Path] = predict_from_load_func(
         scene_paths=scene_paths,
-        load_func=load_s2,
+        load_func=load_func(sensor),
         output_dir=output_dir,
         **kwargs,
     )
