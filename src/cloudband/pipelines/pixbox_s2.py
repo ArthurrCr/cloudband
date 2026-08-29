@@ -14,7 +14,7 @@ from numpy.typing import NDArray
 
 from cloudband.eval.confusion import BinaryConfusion
 from cloudband.eval.experiments import prediction_masks, run_experiments
-from cloudband.labels import pixbox_s2
+from cloudband.labels import pixbox
 
 PREDICTION_COLUMN = "predicted_class"
 
@@ -31,13 +31,13 @@ def load_reference(
     so a corrupted file is still caught.
     """
     table = pd.read_csv(csv_path)
-    pixbox_s2.require_columns(table)
+    pixbox.require_columns(table)
     if verify:
-        differences = pixbox_s2.verify_label_counts(table)
+        differences = pixbox.verify_label_counts(table)
         if differences:
             raise ValueError(f"label counts differ from the reference collection: {differences}")
     if drop_unavailable:
-        table = pixbox_s2.drop_unavailable_scenes(table)
+        table = pixbox.drop_unavailable_scenes(table)
     return table
 
 
@@ -71,16 +71,16 @@ def attach_predictions(
     expected_size: int | None = EXPECTED_SCENE_SIZE,
 ) -> pd.DataFrame:
     """Sample predictions at every labelled pixel, scene by scene."""
-    missing = sorted(set(table[pixbox_s2.PRODUCT_COLUMN]) - set(pixbox_s2.PRODUCT_ID_TO_SCENE))
+    missing = sorted(set(table[pixbox.PRODUCT_COLUMN]) - set(pixbox.PRODUCT_ID_TO_SCENE))
     if missing:
         raise ValueError(f"no scene name known for product ids {missing}")
 
     parts = []
-    for product_id, group in table.groupby(pixbox_s2.PRODUCT_COLUMN, sort=True):
-        scene_name = pixbox_s2.PRODUCT_ID_TO_SCENE[int(product_id)]
+    for product_id, group in table.groupby(pixbox.PRODUCT_COLUMN, sort=True):
+        scene_name = pixbox.PRODUCT_ID_TO_SCENE[int(product_id)]
         prediction = read_prediction(find_prediction(predictions_dir, scene_name), expected_size)
         sampled = group.copy()
-        sampled[PREDICTION_COLUMN] = pixbox_s2.sample_predictions(group, prediction)
+        sampled[PREDICTION_COLUMN] = pixbox.sample_predictions(group, prediction)
         parts.append(sampled)
     return pd.concat(parts).loc[table.index]
 
@@ -89,7 +89,7 @@ def score(table: pd.DataFrame) -> dict[str, BinaryConfusion]:
     """Build one confusion matrix per experiment over the whole collection."""
     if PREDICTION_COLUMN not in table.columns:
         raise ValueError(f"missing {PREDICTION_COLUMN}; call attach_predictions first")
-    reference = pixbox_s2.label_masks(table)
+    reference = pixbox.label_masks(table)
     predicted = prediction_masks(table[PREDICTION_COLUMN].to_numpy())
     return run_experiments(reference, predicted)
 
@@ -101,7 +101,7 @@ def score_per_scene(table: pd.DataFrame) -> dict[str, dict[str, BinaryConfusion]
     recovered with eval.experiments.pool.
     """
     per_scene = {}
-    for product_id, group in table.groupby(pixbox_s2.PRODUCT_COLUMN, sort=True):
-        scene_name = pixbox_s2.PRODUCT_ID_TO_SCENE[int(product_id)]
+    for product_id, group in table.groupby(pixbox.PRODUCT_COLUMN, sort=True):
+        scene_name = pixbox.PRODUCT_ID_TO_SCENE[int(product_id)]
         per_scene[scene_name] = score(group)
     return per_scene

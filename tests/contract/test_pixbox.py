@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from cloudband.eval.experiments import prediction_masks, run_experiments
-from cloudband.labels.pixbox_s2 import (
+from cloudband.labels.pixbox import (
     CLOUD_COLUMN,
     CLOUD_IDS,
     COLUMN_COLUMN,

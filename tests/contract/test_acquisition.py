@@ -11,7 +11,7 @@ from pathlib import Path
 import pytest
 
 from cloudband.acquisition import manifest
-from cloudband.labels.pixbox_s2 import PRODUCT_ID_TO_SCENE
+from cloudband.labels.pixbox import PRODUCT_ID_TO_SCENE
 
 SMALL = 1024
 

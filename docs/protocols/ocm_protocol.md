@@ -115,7 +115,10 @@ fits in a single tile: the package reduces them to 509 and 254 and emits a warni
 manifest record what actually ran.
 
 Model versions 1.0 to 3.0 require fastai to be installed. Version 1.0 produced the values
-reported in the paper.
+reported in the paper, but those weights no longer load: `torch.load` raises
+`ModuleNotFoundError: No module named 'torch.utils.serialization'` on a current PyTorch. See
+`docs/protocols/DIVERGENCES.md` D13. Every run in this project uses package 1.7.0 with the
+latest weights, which makes the collections comparable to each other but not to the paper.
 
 ## Fidelity targets
 
@@ -201,6 +204,120 @@ collection.
 Against the PixBox values the differences are +1.90, +2.39 and +6.65 percentage points. These
 are not improvements: CloudSEN12 is inside the training domain and PixBox is not, and the
 populations differ in geography and class balance.
+
+## Model versions after the paper
+
+No paper covers the weight versions released after the 2025 publication. The model changelog and
+the v4 training dataset card document what changed.
+
+### Version history
+
+| Version | Backbones | Framework | Training datasets |
+| --- | --- | --- | --- |
+| V1 | regnety_004, convnextv2_nano | fastai + timm | CloudSEN12 High |
+| V2 | regnety_004, edgenext_small | fastai + timm | CloudSEN12 High |
+| V3 | regnety_004, edgenext_small | fastai + timm | + KappaSet, PC, SR, hard negatives |
+| V4 | regnety_004, edgenext_small | smp + timm | + Scribble, 2k, OCM Scribble |
+
+V1 is the baseline release supporting the paper. V2 changed the second backbone and introduced
+what the changelog calls random interpolation, on the same training data. V3 expanded the data.
+V4 moved to segmentation-models-pytorch with smaller and faster models and expanded the data
+again.
+
+The change at V2 is isolated: architecture and one training technique moved while the data stayed
+fixed. Any gain over the published values therefore cannot be attributed to data volume alone.
+
+V3 and later were additionally trained on Sentinel-2 imagery super-resolved 2x, which extends the
+supported inference range down to 5 m. The documentation notes that 5 m is no more accurate than
+10 m; it only widens the range of imagery the model accepts.
+
+Not established: what random interpolation means at V2. The paper already resampled to random
+scales, so the change may be randomising the interpolation method rather than the scale, but the
+changelog does not say.
+
+### Version 4 training data
+
+Version 1.0, the paper: 16,980 patches, CloudSEN12 high train split at L1C and L2A.
+
+Version 4.0: 103,548 image-label pairs, of which 100,528 train, 1,070 validation and 1,950 test.
+That is 5.9 times the training data of the paper.
+
+| Source | Images | Level | Loss weight |
+| --- | --- | --- | --- |
+| CloudSEN12 high | 16,980 | L1C + L2A | 1.0 |
+| CloudSEN12 scribble | 20,000 | L1C + L2A | 1.0 |
+| CloudSEN12 2k | 1,694 | L1C + L2A | 0.8 |
+| CloudSEN12 planetary computer | 8,403 | L2A | 1.0 |
+| CloudSEN12 super resolution tiles | 33,960 | L1C | 1.1 |
+| CloudSEN12 super resolution raw | 8,490 | L1C | 1.0 |
+| Kappaset | 9,250 | L1C | 0.2 |
+| OCM hard negative | 920 | L2A | 0.7 |
+| OCM scribble | 831 | L2A | 1.1 |
+
+The counts sum to 100,528 training pairs, 72,547 L1C and 31,001 L2A, matching the totals on the
+card.
+
+Of the training data, 67,833 pairs or 67.5 % derive from the same 8,490 CloudSEN12 high labels
+through reprocessing: re-downloaded L2A from Planetary Computer, and 2x ESRGAN super-resolution
+stored both tiled and raw. The remaining 32,695 pairs or 32.5 % come from sources the paper did
+not use.
+
+OCM hard negative is 920 cloud-free scenes the model had previously misclassified as cloudy,
+labelled entirely clear and curated for cloud-like surfaces such as snow, sand and haze. Loss
+weights range from 0.2 for Kappaset to 1.1 for super-resolution tiles and OCM scribble.
+
+### Held-out splits
+
+The card states that the CloudSEN12 validation and test splits are used only for evaluation and
+never for training. The counts confirm it: 1,070 validation is 535 patches at two processing
+levels, and 1,950 test is 975 at two levels, matching the published splits. A CloudSEN12+ test
+result measured with v4 weights is therefore not contaminated.
+
+### Training protocol
+
+The hyperparameters in the Training section above are the V1 protocol, which is the paper. The
+changelog records no training settings for V2 to V4, so learning rate, epoch budget, batch size
+and augmentation probabilities are documented only for V1. ADR-0023 reproduces that protocol,
+which is the only one fully specified.
+
+### Consequence for this project
+
+Any comparison against a model trained on the paper protocol must use a model trained the same
+way, not the v4 weights. Training on 16,980 patches and comparing against one trained on 100,528
+measures data volume, not architecture. ADR-0023 requires both phase 2 models to be trained by
+this project for that reason.
+
+## In-domain and Landsat baselines
+
+Every figure below comes from package 1.7.0 with the latest weights, so the three collections
+are comparable to each other. They are not comparable to the paper, which used version 1.0.
+
+| Collection | Pixels | clear | cloud | shadow |
+| --- | --- | --- | --- | --- |
+| PixBox Sentinel-2, 28 scenes | 16,801 | 92.35 | 91.60 | 82.07 |
+| PixBox Landsat 8, 11 scenes | 18,830 | 96.47 | 96.35 | 83.64 |
+| CloudSEN12+ test, 975 patches | 252,603,975 | 94.32 | 93.91 | 88.02 |
+
+Landsat 8 confusion matrix:
+
+| Class | TP | TN | FP | FN | Sensitivity | Specificity | BOA |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| clear | 12,322 | 6,031 | 434 | 43 | 99.65 | 93.29 | 96.47 |
+| cloud | 5,088 | 13,329 | 23 | 390 | 92.88 | 99.83 | 96.35 |
+| shadow | 941 | 17,412 | 22 | 455 | 67.41 | 99.87 | 83.64 |
+
+Reference positives come out at 12,365 clear, 5,478 cloud and 1,396 shadow, matching the
+published counts exactly, so the label mapping is confirmed.
+
+The Landsat result sits 5.02, 4.89 and 8.42 percentage points above the published values. The
+gain is almost entirely in sensitivity rather than specificity: shadow rises from 50.86 % to
+67.41 % and cloud from 83.72 % to 92.88 %, while specificity moves by less than a point. Missed
+detections are the failure mode the paper describes, and the newer weights address it. The gain
+is far larger here than the 0.22 to 0.87 points seen on Sentinel-2, which is consistent with
+Landsat sitting outside the training domain, where there is more room to improve.
+
+The Landsat collection is focused on Northern European coastal areas, so its absolute values are
+not comparable to the globally distributed collections.
 
 ## PixBox labels
 

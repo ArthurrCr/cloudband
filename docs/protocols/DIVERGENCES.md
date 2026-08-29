@@ -21,6 +21,8 @@ Status values: `open`, `resolved`.
 | D10 | Overall accuracy typo in the OmniCloudMask equations | resolved |
 | D11 | PixBox Sentinel-2 scene declared but not published | resolved |
 | D12 | The two PixBox collections use incompatible schemas | resolved |
+| D13 | OmniCloudMask model version 1.0 weights no longer load | open |
+| D14 | Published weights postdate the paper and were trained differently | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -223,3 +225,71 @@ in Tables A.1 and A.2 exactly.
 A further consequence for interpretation: shadow is measured slightly differently across the two
 collections, since only the Sentinel-2 table excludes topographic shadow from the negative class
 explicitly.
+
+## D13. OmniCloudMask model version 1.0 weights no longer load
+
+Status: open, with no known workaround. Blocks fidelity checking against the paper values.
+
+The values reported in the OmniCloudMask paper were produced with model version 1.0. Loading
+those weights fails on the current environment:
+
+    ModuleNotFoundError: No module named 'torch.utils.serialization'
+
+raised from `torch.load` inside `model_utils.load_model_from_weights`. The `.pth` files were
+serialised by a PyTorch old enough to reference a module removed from the library years ago.
+Both download sources were tried, Hugging Face and Google Drive; the files download correctly
+and fail at deserialisation, so the fault is in the archive format rather than the transfer.
+
+Resolving it would need a PyTorch old enough to unpickle the files and new enough for the rest
+of the package, which is not available on a Colab runtime without breaking the CUDA build.
+
+Consequence. Paper values cannot be reproduced directly. Fidelity of the pipeline is instead
+established on PixBox Sentinel-2 against the reference notebook, which runs package version
+1.7.0, and matches to within 0.07, 0.08 and 0.70 percentage points. That check validates the
+label mapping, the pixel sampling and the metric implementation, all of which are shared across
+collections.
+
+All runs in this project therefore use package 1.7.0 with the latest weights, which makes the
+three collections comparable to each other. The published values are not comparable to them,
+being produced by a different weight set.
+
+## D14. Published weights postdate the paper and were trained differently
+
+Status: resolved. Training hyperparameters after V1 remain undocumented at source.
+
+The values in the OmniCloudMask paper were produced by model version 1.0. The package now ships
+version 4.0 by default, and no paper covers versions 2.0 to 4.0.
+
+The model changelog records four versions:
+
+| Version | Backbones | Framework | Training datasets |
+| --- | --- | --- | --- |
+| V1 | regnety_004, convnextv2_nano | fastai + timm | CloudSEN12 High |
+| V2 | regnety_004, edgenext_small | fastai + timm | CloudSEN12 High |
+| V3 | regnety_004, edgenext_small | fastai + timm | + KappaSet, PC, SR, hard negatives |
+| V4 | regnety_004, edgenext_small | smp + timm | + Scribble, 2k, OCM Scribble |
+
+The change at V2 is isolated: the second backbone moved from ConvNeXtV2 nano to EdgeNeXt small
+and the changelog notes a new random interpolation technique, while the training data stayed at
+CloudSEN12 High. Data expanded at V3, and again at V4 alongside the framework move to
+segmentation-models-pytorch. Training grew from 16,980 pairs to 100,528 across nine sub-datasets.
+
+Not established: the training hyperparameters for V2 to V4, which the changelog does not record,
+and what random interpolation means at V2. The paper already resampled to random scales, so it
+may be the interpolation method rather than the scale that became random.
+
+Measured effect. Running the same pipeline with v4 weights against the paper values gives
++5.02, +4.89 and +8.42 percentage points on PixBox Landsat 8. The gain is almost entirely in
+sensitivity: shadow rises from 50.86 % to 67.41 %. On Sentinel-2 the same comparison, made
+against the 1.7.0 reference notebook rather than the paper, gives 0.07 to 0.70 points, because
+that notebook already uses the newer weights.
+
+The gain cannot be attributed to data volume alone, since the V2 step changed architecture and
+one training technique on unchanged data. How the total divides between the four steps is not
+measurable without per-version results, which are not published.
+
+Consequence. Published values and v4 measurements are not interchangeable. Every run in this
+project uses 1.7.0 with the latest weights so that the three collections are comparable to each
+other. Phase 2 must train both models rather than compare against v4, as ADR-0023 requires:
+comparing a model trained on 16,980 patches against one trained on 100,528 measures data volume,
+not architecture.
