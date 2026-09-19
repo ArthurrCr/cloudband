@@ -65,6 +65,7 @@ class MixedResolutionCallback(Callback):
         self.nodata_value = nodata_value
         self.last_gsd_m: float | None = None
         self.last_size_px: int | None = None
+        self.gsd_history: list[float] = []
 
     def before_batch(self):
         gsd = sample_gsd(self.min_gsd_m, self.max_gsd_m, self.rng)
@@ -74,6 +75,7 @@ class MixedResolutionCallback(Callback):
         self.learn.yb = (resize_annotation(annotations, size),)
         self.last_gsd_m = gsd
         self.last_size_px = size
+        self.gsd_history.append(gsd)
 
 
 def mixed_resolution_callback(
@@ -94,6 +96,8 @@ class FitResult:
     learner: Learner
     best_val_loss: float
     checkpoint_name: str
+    seed: int
+    sampled_gsds: tuple
 
 
 def checkpoint_name(protocol: TrainProtocol, seed: int) -> str:
@@ -155,4 +159,6 @@ def fit_protocol(
         learner=learner,
         best_val_loss=float(save_cb.best),
         checkpoint_name=name,
+        seed=seed,
+        sampled_gsds=tuple(resolution_cb.gsd_history),
     )
