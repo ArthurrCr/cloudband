@@ -74,20 +74,30 @@ class Sample:
 
 
 def load_remote(name: str = REMOTE_L1C) -> pd.DataFrame:
-    """Load the dataset index without downloading the archives."""
-    import tacoreader
+    """Load the dataset index without downloading the archives.
+
+    CloudSEN12+ is still published in the legacy TACO v1 format, which
+    tacoreader 2.0+ no longer reads through its top-level API; the
+    compatibility subpackage keeps reading it without pinning the package
+    to an old major version.
+    """
+    import tacoreader.v1 as tacoreader
 
     table: pd.DataFrame = tacoreader.load(name)
     return table
 
 
 def load_local(parts: Sequence[Path]) -> pd.DataFrame:
-    """Load and concatenate previously downloaded .taco parts."""
+    """Load and concatenate previously downloaded .taco parts.
+
+    Same legacy-format situation as load_remote: the .taco parts already
+    downloaded are v1 format, read through the compatibility subpackage.
+    """
     missing = [str(path) for path in parts if not Path(path).is_file()]
     if missing:
         raise FileNotFoundError(f"missing taco parts: {missing}")
 
-    import tacoreader
+    import tacoreader.v1 as tacoreader
 
     frames = [tacoreader.load(str(path)) for path in parts]
     table: pd.DataFrame = pd.concat(frames, ignore_index=True)
