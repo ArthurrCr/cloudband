@@ -47,3 +47,40 @@ def test_ocm_ensemble_averages_softmax_probabilities_not_logits():
     expected = (torch.softmax(logits_a, dim=1) + torch.softmax(logits_b, dim=1)) / 2
     assert torch.allclose(output, expected, atol=1e-6)
     assert torch.allclose(output.sum(dim=1), torch.ones(1, 1, 1), atol=1e-6)
+
+
+def test_ocm_ensemble_moves_input_to_its_own_device():
+    class TinyParameterizedModel(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.conv = torch.nn.Conv2d(3, 4, kernel_size=1)
+
+        def forward(self, x):
+            return self.conv(x)
+
+    ensemble = OcmEnsemble((TinyParameterizedModel(), TinyParameterizedModel()))
+    calls = []
+    original_to = torch.Tensor.to
+
+    def spy_to(self, *args, **kwargs):
+        calls.append((args, kwargs))
+        return original_to(self, *args, **kwargs)
+
+    torch.Tensor.to = spy_to
+    try:
+        ensemble(torch.rand(1, 3, 4, 4))
+    finally:
+        torch.Tensor.to = original_to
+
+    assert len(calls) >= 1
+
+
+def test_ocm_ensemble_with_no_parameters_falls_back_to_the_input_device():
+    ensemble = OcmEnsemble(
+        (
+            ConstantLogits(torch.zeros(1, 4, 1, 1)),
+            ConstantLogits(torch.zeros(1, 4, 1, 1)),
+        )
+    )
+    output = ensemble(torch.rand(1, 3, 1, 1))
+    assert output.shape == (1, 4, 1, 1)

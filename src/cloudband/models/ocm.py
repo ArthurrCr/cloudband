@@ -66,6 +66,9 @@ class OcmEnsemble(torch.nn.Module):
         self.models = torch.nn.ModuleList(models)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        params = list(self.parameters())
+        device = params[0].device if params else x.device
+        x = x.to(device)
         probabilities = [torch.softmax(model(x), dim=1) for model in self.models]
         return torch.stack(probabilities, dim=0).mean(dim=0)
 
