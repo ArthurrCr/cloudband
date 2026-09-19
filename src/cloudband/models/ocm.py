@@ -90,31 +90,42 @@ def train_ocm_ensemble(
     for backbone_name in PAPER_BACKBONES:
         model = model_builder(backbone_name, img_size=img_size, pretrained=pretrained)
         learner = Learner(dls, model, loss_func=build_loss())
-        results[backbone_name] = fit_protocol(learner, protocol, seed=seed)
+        results[backbone_name] = fit_protocol(
+            learner, protocol, seed=seed, checkpoint_suffix=backbone_name
+        )
     return results
 
 
 def run_ocm_ensemble_phase2(
     dls: DataLoaders,
     protocol: TrainProtocol,
-    seed: int,
+    seeds: tuple,
     img_size: tuple = (VALID_SIZE, VALID_SIZE),
     pretrained: bool = True,
+    search_seed: int | None = None,
 ) -> dict:
-    """Search the learning rate once, then train every backbone at the winner.
+    """Search the learning rate once, then train every backbone once per seed.
 
-    The learning rate is searched using the first backbone in
-    PAPER_BACKBONES as the representative for "OCM" as an architecture, per
-    D2 of ADR-0023 — the ADR partitions the learning-rate search by
-    architecture (OCM vs. Swin), not by backbone within OCM's own ensemble.
-    Both backbones then train at the full budget with that one winning
-    rate, each with its own checkpoint and its own manifest.
+    The learning rate is searched once, at a single fixed seed (the first
+    of seeds by default), using the first backbone in PAPER_BACKBONES as
+    the representative for "OCM" as an architecture, per D2 of ADR-0023 —
+    the ADR partitions the learning-rate search by architecture (OCM vs.
+    Swin), not by backbone within OCM's own ensemble, and not by seed:
+    searching once keeps the seed repetitions isolated to initialization
+    variation, rather than mixing in a different winning rate for each one.
+    Every backbone then trains at the full budget with that one winning
+    rate, once per seed, each with its own checkpoint and its own manifest.
+
+    Returns a dict keyed by backbone name, each value a dict keyed by seed.
     """
+    if search_seed is None:
+        search_seed = seeds[0]
+
     representative = PAPER_BACKBONES[0]
     lr_search = search_learning_rate(
         dls,
         protocol,
-        seed=seed,
+        seed=search_seed,
         model_builder=lambda: build_unet(
             representative, img_size=img_size, pretrained=pretrained
         ),
@@ -122,16 +133,20 @@ def run_ocm_ensemble_phase2(
     winner = lr_search.winner()
     winning_protocol = full_protocol(protocol, winner.learning_rate)
 
-    runs = {}
+    runs: dict = {}
     for backbone_name in PAPER_BACKBONES:
-        model = build_unet(backbone_name, img_size=img_size, pretrained=pretrained)
-        learner = Learner(dls, model, loss_func=build_loss())
-        fit_result = fit_protocol(learner, winning_protocol, seed=seed)
-        manifest = build_training_manifest(fit_result, winning_protocol)
-        runs[backbone_name] = Phase2Run(
-            lr_search=lr_search,
-            fit_result=fit_result,
-            manifest=manifest,
-            winning_protocol=winning_protocol,
-        )
+        runs[backbone_name] = {}
+        for seed in seeds:
+            model = build_unet(backbone_name, img_size=img_size, pretrained=pretrained)
+            learner = Learner(dls, model, loss_func=build_loss())
+            fit_result = fit_protocol(
+                learner, winning_protocol, seed=seed, checkpoint_suffix=backbone_name
+            )
+            manifest = build_training_manifest(fit_result, winning_protocol)
+            runs[backbone_name][seed] = Phase2Run(
+                lr_search=lr_search,
+                fit_result=fit_result,
+                manifest=manifest,
+                winning_protocol=winning_protocol,
+            )
     return runs

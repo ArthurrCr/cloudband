@@ -40,7 +40,9 @@ def build_test_dls():
     )
 
 
-def test_ocm_ensemble_phase2_searches_once_and_trains_both_backbones(monkeypatch):
+def test_ocm_ensemble_phase2_searches_once_and_trains_both_backbones_per_seed(
+    monkeypatch,
+):
     monkeypatch.setattr(ocm_module, "build_unet", lambda *a, **k: TinyModelStandIn())
     dls = build_test_dls()
     protocol = TrainProtocol(
@@ -49,18 +51,29 @@ def test_ocm_ensemble_phase2_searches_once_and_trains_both_backbones(monkeypatch
         learning_rate=1e-3,
         effective_batch_size=2,
     )
+    seeds = (0, 1)
 
-    runs = ocm_module.run_ocm_ensemble_phase2(dls, protocol, seed=protocol.seeds[0])
+    runs = ocm_module.run_ocm_ensemble_phase2(dls, protocol, seeds=seeds)
 
     assert set(runs) == set(PAPER_BACKBONES)
-    winning_rates = {run.winning_protocol.learning_rate for run in runs.values()}
-    assert len(winning_rates) == 1, "both backbones must train at the same winning rate"
-    for run in runs.values():
+    for backbone_runs in runs.values():
+        assert set(backbone_runs) == set(seeds)
+
+    all_runs = [
+        run for backbone_runs in runs.values() for run in backbone_runs.values()
+    ]
+    winning_rates = {run.winning_protocol.learning_rate for run in all_runs}
+    assert len(winning_rates) == 1, (
+        "every backbone and seed must share the winning rate"
+    )
+    assert len({id(run.lr_search) for run in all_runs}) == 1, "the search must run once"
+
+    for run in all_runs:
         assert len(run.lr_search.runs) == len(LR_SEARCH_GRID)
         assert run.fit_result.best_val_loss < float("inf")
 
 
-def test_swin_phase2_searches_and_trains(monkeypatch):
+def test_swin_phase2_searches_once_and_trains_once_per_seed(monkeypatch):
     monkeypatch.setattr(
         swin_module, "build_swin_upernet", lambda *a, **k: TinyModelStandIn()
     )
@@ -71,9 +84,16 @@ def test_swin_phase2_searches_and_trains(monkeypatch):
         learning_rate=1e-3,
         effective_batch_size=2,
     )
+    seeds = (0, 1)
 
-    run = swin_module.run_swin_upernet_phase2(dls, protocol, seed=protocol.seeds[0])
+    results = swin_module.run_swin_upernet_phase2(dls, protocol, seeds=seeds)
 
-    assert len(run.lr_search.runs) == len(LR_SEARCH_GRID)
-    assert run.fit_result.best_val_loss < float("inf")
-    assert run.manifest.seed == protocol.seeds[0]
+    assert [r.fit_result.seed for r in results] == list(seeds)
+    assert len({id(r.lr_search) for r in results}) == 1, "the search must run once"
+    winning_rates = {r.winning_protocol.learning_rate for r in results}
+    assert len(winning_rates) == 1
+
+    for result in results:
+        assert len(result.lr_search.runs) == len(LR_SEARCH_GRID)
+        assert result.fit_result.best_val_loss < float("inf")
+        assert result.manifest.seed == result.fit_result.seed

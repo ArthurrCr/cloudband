@@ -12,7 +12,7 @@ from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS
 from cloudband.train.loop import fit_protocol
 from cloudband.train.loss import build_loss
-from cloudband.train.phase2 import Phase2Run, run_phase2
+from cloudband.train.phase2 import run_phase2
 from cloudband.train.protocol import TrainProtocol
 
 INPUT_CHANNELS = len(RGN_BANDS)
@@ -89,16 +89,18 @@ def train_swin_upernet(
 def run_swin_upernet_phase2(
     dls: DataLoaders,
     protocol: TrainProtocol,
-    seed: int,
+    seeds: tuple,
     img_size: int = VALID_SIZE,
     pretrained: bool = True,
-) -> Phase2Run:
-    """Search the learning rate, then train Swin+UPerNet at the full budget."""
+    search_seed: int | None = None,
+) -> tuple:
+    """Search the learning rate once, then train Swin+UPerNet once per seed."""
     return run_phase2(
         dls,
         protocol,
-        seed,
+        seeds,
         model_builder=lambda: build_swin_upernet(
             img_size=img_size, pretrained=pretrained
         ),
+        search_seed=search_seed,
     )
