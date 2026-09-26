@@ -34,7 +34,8 @@ def plot_experiment_comparison(
         bar_colors = [colors[model] for model in values.index]
 
         fig, ax = plt.subplots(figsize=(6, 4))
-        ax.bar(values.index.astype(str), values.to_numpy(), color=bar_colors)
+        bars = ax.bar(values.index.astype(str), values.to_numpy(), color=bar_colors)
+        ax.bar_label(bars, fmt="%.2f", padding=3)
         ax.set_title(experiment)
         ax.set_ylabel(metric_label)
         ax.set_ylim(0, 100)

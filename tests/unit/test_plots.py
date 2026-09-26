@@ -69,6 +69,21 @@ def test_plot_experiment_comparison_draws_one_bar_per_model_in_its_colour():
     assert drawn_colors == expected_colors
 
 
+def test_plot_experiment_comparison_labels_each_bar_with_its_value():
+    frames = {
+        "ocm-model1.0": fake_scores(94.0, 92.0, 88.0),
+        "ocm-model4.0": fake_scores(95.5, 93.0, 90.25),
+    }
+    comparison = compare(frames, column="boa")
+    colors = assign_colors(list(comparison.columns))
+
+    figures = plot_experiment_comparison(comparison, colors)
+
+    ax = figures["clear"].axes[0]
+    labels = sorted(text.get_text() for text in ax.texts)
+    assert labels == ["94.00", "95.50"]
+
+
 def test_plot_experiment_comparison_rejects_a_model_missing_a_colour():
     frames = {
         "ocm-model1.0": fake_scores(94.0, 92.0, 88.0),
