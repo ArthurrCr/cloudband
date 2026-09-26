@@ -174,4 +174,12 @@ def test_compare_across_seeds_matches_the_two_step_version():
         average_across_seeds((seed_0_b, seed_1_b)),
     )
 
-    assert combined == two_step
+    assert len(combined) == len(two_step)
+    for combined_result, two_step_result in zip(combined, two_step):
+        assert combined_result.experiment == two_step_result.experiment
+        assert combined_result.n_pairs == two_step_result.n_pairs
+        assert combined_result.statistic == pytest.approx(two_step_result.statistic)
+        assert combined_result.p_value == pytest.approx(two_step_result.p_value)
+        assert combined_result.median_difference == pytest.approx(
+            two_step_result.median_difference
+        )

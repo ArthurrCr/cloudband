@@ -100,8 +100,9 @@ class FitResult:
     sampled_gsds: tuple
 
 
-def checkpoint_name(protocol: TrainProtocol, seed: int) -> str:
-    return f"{protocol.run_id}-seed{seed}"
+def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str:
+    base = f"{protocol.run_id}-seed{seed}"
+    return f"{base}-{suffix}" if suffix else base
 
 
 def fit_protocol(
@@ -109,6 +110,7 @@ def fit_protocol(
     protocol: TrainProtocol,
     seed: int,
     nodata_value: float | None = 0.0,
+    checkpoint_suffix: str = "",
 ) -> FitResult:
     """Run fine_tune with the hyperparameters and seed the protocol fixes.
 
@@ -117,6 +119,11 @@ def fit_protocol(
     per-step batch size. The checkpoint tracks valid_loss, which is cross
     entropy given the loss this project trains with, matching the
     protocol's checkpoint_metric.
+
+    checkpoint_suffix distinguishes multiple models trained under the same
+    run_id and seed, such as the separate backbones in an ensemble; without
+    it, two such calls would write to the same checkpoint file and the
+    second would silently overwrite the first.
 
     nodata_value defaults to 0.0, not the raw sentinel: by the time a batch
     reaches this function it has already gone through dynamic_z_score,
@@ -137,7 +144,7 @@ def fit_protocol(
         protocol, seed=seed, nodata_value=nodata_value
     )
     accumulation_cb = GradientAccumulation(n_acc=protocol.effective_batch_size)
-    name = checkpoint_name(protocol, seed)
+    name = checkpoint_name(protocol, seed, checkpoint_suffix)
     save_cb = SaveModelCallback(monitor=CHECKPOINT_MONITOR, fname=name, with_opt=False)
 
     learner.add_cb(resolution_cb)
