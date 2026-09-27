@@ -17,7 +17,11 @@ from numpy.typing import NDArray
 from cloudband.datasets import cloudsen12 as dataset
 from cloudband.eval.confusion import BinaryConfusion
 from cloudband.eval.experiments import EXPERIMENTS
-from cloudband.eval.metrics import balanced_overall_accuracy
+from cloudband.eval.metrics import (
+    balanced_overall_accuracy,
+    producer_accuracy,
+    user_accuracy,
+)
 from cloudband.eval.report import as_percentages, to_frame
 from cloudband.pipelines import cloudsen12 as scoring
 from cloudband.provenance.manifest import build_manifest
@@ -106,6 +110,8 @@ class RunResult:
     pooled: dict[str, BinaryConfusion]
     scores: pd.DataFrame
     per_scene_boa: pd.DataFrame
+    per_scene_pa: pd.DataFrame
+    per_scene_ua: pd.DataFrame
     pairable: dict[str, int]
 
 
@@ -161,6 +167,8 @@ def run(
     per_scene = scoring.score_split(samples(), predictor)
     pooled = scoring.pooled(per_scene)
     per_scene_boa = scoring.per_scene_metric(per_scene, balanced_overall_accuracy)
+    per_scene_pa = scoring.per_scene_metric(per_scene, producer_accuracy)
+    per_scene_ua = scoring.per_scene_metric(per_scene, user_accuracy)
     return RunResult(
         model_id=model_id,
         dataset_id=dataset_id,
@@ -168,6 +176,8 @@ def run(
         pooled=pooled,
         scores=as_percentages(to_frame(pooled)),
         per_scene_boa=per_scene_boa,
+        per_scene_pa=per_scene_pa,
+        per_scene_ua=per_scene_ua,
         pairable=scoring.pairable_scene_counts(per_scene_boa),
     )
 

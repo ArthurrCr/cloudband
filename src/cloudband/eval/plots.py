@@ -42,6 +42,7 @@ def plot_experiment_comparison(
         for spine in ("top", "right"):
             ax.spines[spine].set_visible(False)
         fig.tight_layout()
+        plt.close(fig)
         figures[experiment] = fig
 
     return figures
