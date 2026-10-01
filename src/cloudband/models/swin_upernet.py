@@ -21,7 +21,13 @@ OUTPUT_CLASSES = 4
 
 SWIN_DEPTHS = (2, 2, 6, 2)
 SWIN_WINDOW_SIZE = 7
-SWIN_ENCODER_STAGES = (0, 1, 2, 3)
+# Indices into the backbone's stage_names, ["stem", "stage1", ..., "stage4"]: index 0
+# is the stem (the patch embedding, which has the same stride as stage1), so the four
+# Swin stages the UPerNet decoder is built for are 1 to 4. Using 0 to 3 instead drops
+# the deepest stage and feeds the decoder the stem twice.
+SWIN_ENCODER_STAGES = (1, 2, 3, 4)
+SWIN_STAGE_CHANNELS = (96, 192, 384, 768)
+SWIN_STAGE_STRIDES = (4, 8, 16, 32)
 UPERNET_POOL_SCALES = (1, 2, 3, 6)
 
 PRETRAINED_BACKBONE_ID = "microsoft/swin-tiny-patch4-window7-224"

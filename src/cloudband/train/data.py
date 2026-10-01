@@ -25,17 +25,20 @@ class CloudSen12Dataset(Dataset):
         table: pd.DataFrame,
         crop_to_valid: bool = True,
         read_sample: SampleReader = dataset.read_sample,
+        bands_selected: bool = False,
     ):
         self.table = table
         self.crop_to_valid = crop_to_valid
         self.read_sample = read_sample
+        self.bands_selected = bands_selected
 
     def __len__(self) -> int:
         return len(self.table)
 
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         sample = self.read_sample(self.table, index, self.crop_to_valid)
-        image = dynamic_z_score(select_rgn(sample.image).astype(np.float32))
+        stack = sample.image if self.bands_selected else select_rgn(sample.image)
+        image = dynamic_z_score(stack.astype(np.float32))
         annotation = sample.annotation.astype(np.int64)
         return torch.from_numpy(image), torch.from_numpy(annotation)
 
@@ -46,15 +49,27 @@ def build_dataloaders(
     micro_batch_size: int,
     num_workers: int = 0,
     read_sample: SampleReader = dataset.read_sample,
+    valid_read_sample: SampleReader | None = None,
+    bands_selected: bool = False,
 ) -> DataLoaders:
     """Wrap train and validation tables into fastai DataLoaders.
 
     micro_batch_size is the per-step batch the hardware can hold, independent
     of the protocol's effective batch size; gradient accumulation in the
     training loop makes up the difference.
+
+    valid_read_sample defaults to read_sample; a separate one lets each split
+    read from its own local cache. bands_selected says the readers already
+    return only the R-G-NIR bands, as a cache does.
     """
-    train_dataset = CloudSen12Dataset(train_table, read_sample=read_sample)
-    valid_dataset = CloudSen12Dataset(valid_table, read_sample=read_sample)
+    train_dataset = CloudSen12Dataset(
+        train_table, read_sample=read_sample, bands_selected=bands_selected
+    )
+    valid_dataset = CloudSen12Dataset(
+        valid_table,
+        read_sample=valid_read_sample or read_sample,
+        bands_selected=bands_selected,
+    )
     train_loader = torch.utils.data.DataLoader(
         train_dataset,
         batch_size=micro_batch_size,

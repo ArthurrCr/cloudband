@@ -13,13 +13,17 @@ from cloudband.train.normalize import dynamic_z_score
 CLASS_AXIS = 1
 
 
-def build_predictor(model: torch.nn.Module, device: str | None = None):
+def build_predictor(
+    model: torch.nn.Module, device: str | None = None, bands_selected: bool = False
+):
     """Wrap a trained model so it accepts a full band stack and predicts hard classes.
 
     Applies the same preprocessing training uses: select the R-G-NIR bands,
     then dynamic Z-score normalization, before the model ever sees the data.
     device defaults to cuda when available, so a model trained on GPU does
-    not silently fall back to a much slower CPU evaluation.
+    not silently fall back to a much slower CPU evaluation. bands_selected says
+    the stacks already hold only the R-G-NIR bands, as samples from a local
+    cache do, so the band selection is skipped.
     """
     if device is None:
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -27,7 +31,8 @@ def build_predictor(model: torch.nn.Module, device: str | None = None):
     model.eval()
 
     def predictor(stack: NDArray[np.integer]) -> NDArray[np.integer]:
-        image = dynamic_z_score(select_rgn(stack).astype(np.float32))
+        bands = stack if bands_selected else select_rgn(stack)
+        image = dynamic_z_score(bands.astype(np.float32))
         tensor = torch.from_numpy(image).unsqueeze(0).to(device)
         with torch.no_grad():
             logits = model(tensor)
