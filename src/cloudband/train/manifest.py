@@ -25,10 +25,22 @@ def package_versions(names: tuple = TRACKED_PACKAGES) -> dict:
     return versions
 
 
-def protocol_config(protocol: TrainProtocol, sampled_gsds: tuple = ()) -> dict:
-    """Turn a protocol into a plain config dict, plus the GSDs actually sampled."""
+def protocol_config(
+    protocol: TrainProtocol, sampled_gsds: tuple = (), valid_losses: tuple = ()
+) -> dict:
+    """Turn a protocol into a plain config dict, plus what the run produced.
+
+    valid_losses is the validation loss after every epoch; with it the epoch of
+    the best checkpoint is recorded, so convergence can be checked later.
+    """
     config = asdict(protocol)
     config["sampled_gsds_m"] = list(sampled_gsds)
+    config["valid_loss_history"] = [float(value) for value in valid_losses]
+    config["best_epoch"] = (
+        min(range(len(valid_losses)), key=lambda i: valid_losses[i])
+        if valid_losses
+        else None
+    )
     return config
 
 
@@ -40,5 +52,5 @@ def build_training_manifest(result: FitResult, protocol: TrainProtocol) -> Manif
         model_id=result.checkpoint_name,
         seed=result.seed,
         package_versions=package_versions(),
-        config=protocol_config(protocol, result.sampled_gsds),
+        config=protocol_config(protocol, result.sampled_gsds, result.valid_losses),
     )

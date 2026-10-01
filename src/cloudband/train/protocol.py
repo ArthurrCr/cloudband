@@ -17,10 +17,17 @@ NATIVE_MIN_GSD_M = 9.0
 NATIVE_MAX_GSD_M = 50.0
 
 LR_SEARCH_GRID = (5e-5, 1e-4, 5e-4, 1e-3, 5e-3)
-PROXY_FROZEN_EPOCHS = 10
-PROXY_UNFROZEN_EPOCHS = 10
-FULL_FROZEN_EPOCHS = 50
-FULL_UNFROZEN_EPOCHS = 50
+# Epoch budget, the same for both architectures (ADR-0023 D5). The full run
+# follows the OmniCloudMask training notebook (training/Train OCM models.ipynb,
+# the non-demo branch: freeze_epochs = 15, unfrozen_epochs = 15). A proxy run is a
+# third of that, so the search costs less than the runs it serves; it has not
+# been checked against how the final ranking of learning rates would come out.
+# The validation loss is recorded every epoch so convergence can be checked
+# afterwards instead of assumed.
+PROXY_FROZEN_EPOCHS = 5
+PROXY_UNFROZEN_EPOCHS = 5
+FULL_FROZEN_EPOCHS = 15
+FULL_UNFROZEN_EPOCHS = 15
 
 COUPLED_FIELDS = frozenset({"run_id", "architecture", "learning_rate"})
 

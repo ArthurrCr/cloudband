@@ -12,8 +12,9 @@ from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS
 from cloudband.train.loop import fit_protocol
 from cloudband.train.loss import build_loss
-from cloudband.train.phase2 import run_phase2
+from cloudband.train.phase2 import run_phase2, run_phase2_resumable
 from cloudband.train.protocol import TrainProtocol
+from cloudband.train.store import RunStore
 
 INPUT_CHANNELS = len(RGN_BANDS)
 OUTPUT_CLASSES = 4
@@ -103,4 +104,28 @@ def run_swin_upernet_phase2(
             img_size=img_size, pretrained=pretrained
         ),
         search_seed=search_seed,
+    )
+
+
+def run_swin_upernet_resumable(
+    dls: DataLoaders,
+    protocol: TrainProtocol,
+    seeds: tuple,
+    store: RunStore,
+    img_size: int = VALID_SIZE,
+    pretrained: bool = True,
+    search_seed: int | None = None,
+    progress=print,
+) -> dict[str, str]:
+    """Like run_swin_upernet_phase2, but saving each run and skipping saved ones."""
+    return run_phase2_resumable(
+        dls,
+        protocol,
+        seeds,
+        model_builder=lambda: build_swin_upernet(
+            img_size=img_size, pretrained=pretrained
+        ),
+        store=store,
+        search_seed=search_seed,
+        progress=progress,
     )

@@ -12,12 +12,18 @@ from fastai.vision.learner import create_unet_model
 
 from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS
-from cloudband.train.loop import fit_protocol
+from cloudband.train.loop import checkpoint_name, fit_protocol
 from cloudband.train.loss import build_loss
-from cloudband.train.phase2 import Phase2Run, full_protocol
+from cloudband.train.phase2 import (
+    Phase2Run,
+    full_protocol,
+    load_or_search_learning_rate,
+    train_if_missing,
+)
 from cloudband.train.lr_search import search_learning_rate
 from cloudband.train.manifest import build_training_manifest
 from cloudband.train.protocol import TrainProtocol
+from cloudband.train.store import RunStore
 
 REGNETY_004 = "regnety_004.pycls_in1k"
 CONVNEXTV2_NANO = "convnextv2_nano.fcmae_ft_in1k"
@@ -150,3 +156,53 @@ def run_ocm_ensemble_phase2(
                 winning_protocol=winning_protocol,
             )
     return runs
+
+
+def run_ocm_ensemble_resumable(
+    dls: DataLoaders,
+    protocol: TrainProtocol,
+    seeds: tuple,
+    store: RunStore,
+    img_size: tuple = (VALID_SIZE, VALID_SIZE),
+    pretrained: bool = True,
+    search_seed: int | None = None,
+    progress=print,
+) -> dict[str, str]:
+    """Like run_ocm_ensemble_phase2, but saving each run and skipping saved ones.
+
+    The learning rate is searched once with the first backbone as the
+    representative and saved; then every seed trains both backbones, one seed
+    at a time, so an interruption leaves complete ensembles for the early
+    seeds. Returns each run's checkpoint name with "trained" or "skipped".
+    """
+    if search_seed is None:
+        search_seed = seeds[0]
+
+    representative = PAPER_BACKBONES[0]
+    lr_search, winning_protocol = load_or_search_learning_rate(
+        dls,
+        protocol,
+        lambda: build_unet(representative, img_size=img_size, pretrained=pretrained),
+        store,
+        search_seed,
+    )
+    progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
+
+    status = {}
+    for seed in seeds:
+        for backbone_name in PAPER_BACKBONES:
+            name = checkpoint_name(winning_protocol, seed, backbone_name)
+            progress(f"{name}: starting")
+            status[name] = train_if_missing(
+                dls,
+                winning_protocol,
+                lr_search,
+                seed,
+                lambda backbone_name=backbone_name: build_unet(
+                    backbone_name, img_size=img_size, pretrained=pretrained
+                ),
+                store,
+                checkpoint_suffix=backbone_name,
+            )
+            progress(f"{name}: {status[name]}")
+    return status

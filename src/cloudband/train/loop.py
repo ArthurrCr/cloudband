@@ -91,6 +91,23 @@ def mixed_resolution_callback(
     )
 
 
+class ValidLossHistory(Callback):
+    """Validation loss after every epoch, frozen and unfrozen phases together.
+
+    Recorder.values restarts at each fit and fine_tune is two fits, so it only
+    holds the unfrozen phase by the time training ends.
+    """
+
+    order = 70  # after the Recorder (50) and the trackers (60)
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.values: list[float] = []
+
+    def after_epoch(self) -> None:
+        self.values.append(float(self.learn.recorder.values[-1][1]))
+
+
 @dataclass(frozen=True)
 class FitResult:
     learner: Learner
@@ -98,6 +115,7 @@ class FitResult:
     checkpoint_name: str
     seed: int
     sampled_gsds: tuple
+    valid_losses: tuple = ()
 
 
 def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str:
@@ -111,6 +129,7 @@ def fit_protocol(
     seed: int,
     nodata_value: float | None = 0.0,
     checkpoint_suffix: str = "",
+    extra_cbs: tuple = (),
 ) -> FitResult:
     """Run fine_tune with the hyperparameters and seed the protocol fixes.
 
@@ -124,6 +143,9 @@ def fit_protocol(
     run_id and seed, such as the separate backbones in an ensemble; without
     it, two such calls would write to the same checkpoint file and the
     second would silently overwrite the first.
+
+    extra_cbs are attached for the duration of the fit and removed after, for
+    instrumentation such as timing; they must not change what is trained.
 
     nodata_value defaults to 0.0, not the raw sentinel: by the time a batch
     reaches this function it has already gone through dynamic_z_score,
@@ -146,10 +168,14 @@ def fit_protocol(
     accumulation_cb = GradientAccumulation(n_acc=protocol.effective_batch_size)
     name = checkpoint_name(protocol, seed, checkpoint_suffix)
     save_cb = SaveModelCallback(monitor=CHECKPOINT_MONITOR, fname=name, with_opt=False)
+    history_cb = ValidLossHistory()
 
     learner.add_cb(resolution_cb)
     learner.add_cb(accumulation_cb)
     learner.add_cb(save_cb)
+    learner.add_cb(history_cb)
+    for callback in extra_cbs:
+        learner.add_cb(callback)
     try:
         learner.fine_tune(
             epochs=protocol.unfrozen_epochs,
@@ -158,6 +184,9 @@ def fit_protocol(
             wd=protocol.weight_decay,
         )
     finally:
+        for callback in extra_cbs:
+            learner.remove_cb(callback)
+        learner.remove_cb(history_cb)
         learner.remove_cb(save_cb)
         learner.remove_cb(accumulation_cb)
         learner.remove_cb(resolution_cb)
@@ -168,4 +197,5 @@ def fit_protocol(
         checkpoint_name=name,
         seed=seed,
         sampled_gsds=tuple(resolution_cb.gsd_history),
+        valid_losses=tuple(history_cb.values),
     )

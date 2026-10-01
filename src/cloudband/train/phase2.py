@@ -9,10 +9,11 @@ from fastai.data.core import DataLoaders
 from fastai.learner import Learner
 
 from cloudband.provenance.manifest import Manifest
-from cloudband.train.loop import FitResult, fit_protocol
+from cloudband.train.loop import FitResult, checkpoint_name, fit_protocol
 from cloudband.train.loss import build_loss
 from cloudband.train.lr_search import search_learning_rate
 from cloudband.train.manifest import build_training_manifest
+from cloudband.train.store import RunStore
 from cloudband.train.protocol import (
     FULL_FROZEN_EPOCHS,
     FULL_UNFROZEN_EPOCHS,
@@ -74,10 +75,17 @@ def train_phase2_run(
     lr_search: LrSearchManifest,
     seed: int,
     model_builder,
+    checkpoint_suffix: str = "",
 ) -> Phase2Run:
-    """Train one full run at an already-decided winning protocol, for one seed."""
+    """Train one full run at an already-decided winning protocol, for one seed.
+
+    checkpoint_suffix keeps apart models trained under the same run_id and
+    seed, such as the backbones of an ensemble.
+    """
     learner = Learner(dls, model_builder(), loss_func=build_loss())
-    fit_result = fit_protocol(learner, winning_protocol, seed=seed)
+    fit_result = fit_protocol(
+        learner, winning_protocol, seed=seed, checkpoint_suffix=checkpoint_suffix
+    )
     manifest = build_training_manifest(fit_result, winning_protocol)
     return Phase2Run(
         lr_search=lr_search,
@@ -111,3 +119,85 @@ def run_phase2(
         train_phase2_run(dls, winning_protocol, lr_search, seed, model_builder)
         for seed in seeds
     )
+
+
+def load_or_search_learning_rate(
+    dls: DataLoaders,
+    protocol: TrainProtocol,
+    model_builder,
+    store: RunStore,
+    search_seed: int,
+) -> tuple[LrSearchManifest, TrainProtocol]:
+    """Reuse a saved learning-rate search, or run it once and save it.
+
+    The search is about a hundred epochs, so it must survive a restart: losing
+    it would mean repeating it, and repeating it could pick a different winner.
+    """
+    saved = store.load_search(protocol)
+    if saved is not None:
+        return saved, full_protocol(protocol, saved.winner().learning_rate)
+
+    lr_search, winning_protocol = search_phase2_learning_rate(
+        dls, protocol, model_builder, search_seed
+    )
+    store.save_search(protocol, lr_search)
+    return lr_search, winning_protocol
+
+
+def train_if_missing(
+    dls: DataLoaders,
+    winning_protocol: TrainProtocol,
+    lr_search: LrSearchManifest,
+    seed: int,
+    model_builder,
+    store: RunStore,
+    checkpoint_suffix: str = "",
+) -> str:
+    """Train one run unless it is already saved; save it as soon as it ends.
+
+    Returns "skipped" when the run was already on durable storage, otherwise
+    "trained".
+    """
+    name = checkpoint_name(winning_protocol, seed, checkpoint_suffix)
+    if store.is_done(name):
+        return "skipped"
+
+    run = train_phase2_run(
+        dls, winning_protocol, lr_search, seed, model_builder, checkpoint_suffix
+    )
+    store.save_run(run)
+    return "trained"
+
+
+def run_phase2_resumable(
+    dls: DataLoaders,
+    protocol: TrainProtocol,
+    seeds: tuple,
+    model_builder,
+    store: RunStore,
+    search_seed: int | None = None,
+    progress=print,
+) -> dict[str, str]:
+    """Search once, then train one run per seed, saving and skipping as it goes.
+
+    Safe to call again after an interruption: the search and every finished
+    seed are read back from the store, and only the missing runs are trained.
+    Returns each run's checkpoint name with "trained" or "skipped".
+    """
+    if search_seed is None:
+        search_seed = seeds[0]
+
+    lr_search, winning_protocol = load_or_search_learning_rate(
+        dls, protocol, model_builder, store, search_seed
+    )
+    progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
+
+    status = {}
+    for seed in seeds:
+        name = checkpoint_name(winning_protocol, seed)
+        progress(f"{name}: starting")
+        status[name] = train_if_missing(
+            dls, winning_protocol, lr_search, seed, model_builder, store
+        )
+        progress(f"{name}: {status[name]}")
+    return status
