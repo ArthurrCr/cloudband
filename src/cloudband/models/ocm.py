@@ -167,6 +167,7 @@ def run_ocm_ensemble_resumable(
     pretrained: bool = True,
     search_seed: int | None = None,
     progress=print,
+    accept_edge_winner: bool = False,
 ) -> dict[str, str]:
     """Like run_ocm_ensemble_phase2, but saving each run and skipping saved ones.
 
@@ -185,6 +186,7 @@ def run_ocm_ensemble_resumable(
         lambda: build_unet(representative, img_size=img_size, pretrained=pretrained),
         store,
         search_seed,
+        accept_edge_winner,
     )
     progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
 

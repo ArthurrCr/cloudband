@@ -127,20 +127,37 @@ def load_or_search_learning_rate(
     model_builder,
     store: RunStore,
     search_seed: int,
+    accept_edge_winner: bool = False,
 ) -> tuple[LrSearchManifest, TrainProtocol]:
     """Reuse a saved learning-rate search, or run it once and save it.
 
     The search is about a hundred epochs, so it must survive a restart: losing
     it would mean repeating it, and repeating it could pick a different winner.
+
+    A winner on either end of the grid means the best rate may lie outside the
+    range searched. The hours that follow are not spent on it unless
+    accept_edge_winner says so: the protocol is to extend the grid for both
+    architectures and search again.
     """
     saved = store.load_search(protocol)
     if saved is not None:
-        return saved, full_protocol(protocol, saved.winner().learning_rate)
+        lr_search = saved
+        winning_protocol = full_protocol(protocol, saved.winner().learning_rate)
+    else:
+        lr_search, winning_protocol = search_phase2_learning_rate(
+            dls, protocol, model_builder, search_seed
+        )
+        store.save_search(protocol, lr_search)
 
-    lr_search, winning_protocol = search_phase2_learning_rate(
-        dls, protocol, model_builder, search_seed
-    )
-    store.save_search(protocol, lr_search)
+    if lr_search.winner_at_edge() and not accept_edge_winner:
+        winner = lr_search.winner().learning_rate
+        raise RuntimeError(
+            f"{protocol.run_id}: the winning learning rate {winner:g} is on an end "
+            f"of the grid {tuple(lr_search.grid)}, so the best rate may lie outside "
+            "it. Extend the grid for both architectures and search again (delete "
+            f"{store.search_path(protocol).name}), or pass accept_edge_winner=True "
+            "to continue and say so when reporting."
+        )
     return lr_search, winning_protocol
 
 
@@ -177,6 +194,7 @@ def run_phase2_resumable(
     store: RunStore,
     search_seed: int | None = None,
     progress=print,
+    accept_edge_winner: bool = False,
 ) -> dict[str, str]:
     """Search once, then train one run per seed, saving and skipping as it goes.
 
@@ -188,7 +206,7 @@ def run_phase2_resumable(
         search_seed = seeds[0]
 
     lr_search, winning_protocol = load_or_search_learning_rate(
-        dls, protocol, model_builder, store, search_seed
+        dls, protocol, model_builder, store, search_seed, accept_edge_winner
     )
     progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
 

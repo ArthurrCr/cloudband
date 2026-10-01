@@ -122,6 +122,7 @@ def run_swin_upernet_resumable(
     pretrained: bool = True,
     search_seed: int | None = None,
     progress=print,
+    accept_edge_winner: bool = False,
 ) -> dict[str, str]:
     """Like run_swin_upernet_phase2, but saving each run and skipping saved ones."""
     return run_phase2_resumable(
@@ -134,4 +135,5 @@ def run_swin_upernet_resumable(
         store=store,
         search_seed=search_seed,
         progress=progress,
+        accept_edge_winner=accept_edge_winner,
     )

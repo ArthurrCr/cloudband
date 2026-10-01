@@ -16,7 +16,29 @@ SHARED_MAX_GSD_M = 22.0
 NATIVE_MIN_GSD_M = 9.0
 NATIVE_MAX_GSD_M = 50.0
 
-LR_SEARCH_GRID = (5e-5, 1e-4, 5e-4, 1e-3, 5e-3)
+# Learning-rate search grid: five points about half a decade apart in log10 (the
+# usual 1 and 3 per decade, so the steps are 0.48 and 0.52 rather than exactly 0.5).
+#
+# Protocol. Each architecture is searched on the same space with the same budget,
+# the winner is chosen on the validation split only, and it is then retrained with
+# several seeds. This is the GEO-Bench-2 protocol (Simumba et al., 2025, arXiv:
+# 2511.15658, sections 3.1 and 6.2), which includes CloudSEN12+ with the same
+# 535-patch validation and 975-patch test splits. It allows up to 16 trials per
+# model; five is what the cost of a proxy run affords here.
+#
+# Range. GEO-Bench-2 searches 1e-6 to 1e-3 for fine-tuning pretrained backbones on
+# Earth-observation segmentation (AdamW, weight decay 0.01). Swin + UPerNet is
+# published at 6e-5 (Liu et al., 2021, ICCV, ADE20K), and OCM's own training uses
+# base_lr = 1e-3 in the same fastai fine_tune call. The grid keeps the upper part of
+# the GEO-Bench-2 range and goes one step past it. fastai's fine_tune gives the
+# pretrained layers base_lr / 200 up to base_lr / 2 after unfreezing, so base_lr is
+# closer to the head's rate than to a single rate for the whole network. That
+# reasoning is this project's, not the literature's.
+#
+# Whether the optimum falls inside is checked, not assumed:
+# LrSearchManifest.winner_at_edge flags a winner on either end of the grid, and the
+# search then has to be extended for both architectures and run again.
+LR_SEARCH_GRID = (3e-5, 1e-4, 3e-4, 1e-3, 3e-3)
 # Epoch budget, the same for both architectures (ADR-0023 D5). The full run
 # follows the OmniCloudMask training notebook (training/Train OCM models.ipynb,
 # the non-demo branch: freeze_epochs = 15, unfrozen_epochs = 15). A proxy run is a
@@ -132,3 +154,14 @@ class LrSearchManifest:
 
     def winner(self) -> LrSearchRun:
         return min(self.runs, key=lambda run: run.val_loss)
+
+    def winner_at_edge(self) -> bool:
+        """True when the best candidate is the lowest or the highest of the grid.
+
+        The best rate may then lie outside the range searched. A grid with fewer
+        than three points has no interior, so nothing can be said and this is
+        False.
+        """
+        if len(self.grid) < 3:
+            return False
+        return self.winner().learning_rate in (min(self.grid), max(self.grid))
