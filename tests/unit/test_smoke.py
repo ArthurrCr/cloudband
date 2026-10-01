@@ -85,7 +85,10 @@ def test_estimate_cost_returns_positive_times_and_leaves_no_checkpoint(
 
     assert estimate.frozen_epoch_seconds > 0
     assert estimate.unfrozen_epoch_seconds > 0
-    assert estimate.peak_memory_gb is None          # no GPU in the test environment
+    if torch.cuda.is_available():
+        assert estimate.peak_memory_gb is not None and estimate.peak_memory_gb > 0
+    else:
+        assert estimate.peak_memory_gb is None
     assert not list((tmp_path / "models").glob("*smoke*"))   # the probe cleans up
 
 
@@ -110,3 +113,38 @@ def test_estimate_scales_with_the_full_dataset_size(tmp_path, monkeypatch):
 
     # timings are noisy, but a 100x larger dataset cannot look cheaper
     assert large.frozen_epoch_seconds > small.frozen_epoch_seconds
+
+
+def test_peak_memory_is_reported_in_gib_when_cuda_is_available(tmp_path, monkeypatch):
+    # Exercise the GPU branch without a GPU: only the four torch.cuda calls the
+    # module makes are replaced, so fastai keeps running on the CPU.
+    from types import SimpleNamespace
+
+    from cloudband.train import smoke
+
+    fake_cuda = SimpleNamespace(
+        is_available=lambda: True,
+        synchronize=lambda: None,
+        reset_peak_memory_stats=lambda: None,
+        max_memory_allocated=lambda: 3 * 1024**3,
+    )
+    monkeypatch.setattr(smoke, "torch", SimpleNamespace(cuda=fake_cuda))
+    monkeypatch.chdir(tmp_path)
+    dls = build_dataloaders(
+        train_table=range(8),
+        valid_table=range(4),
+        micro_batch_size=2,
+        read_sample=fake_read_sample,
+    )
+    protocol = TrainProtocol(
+        run_id="swin-rgn-cs12-shared",
+        architecture="swin",
+        learning_rate=1e-3,
+        effective_batch_size=4,
+    )
+
+    estimate = estimate_cost(
+        dls, 1000, 100, protocol, TinyModelStandIn, label="tiny"
+    )
+
+    assert estimate.peak_memory_gb == pytest.approx(3.0)
