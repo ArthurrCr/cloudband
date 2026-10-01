@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 import torch
 import torch.nn.functional as F
 import fastai.callback.schedule  # noqa: F401  patches fine_tune onto Learner
 from fastai.callback.core import Callback
-from fastai.callback.tracker import SaveModelCallback
+from fastai.callback.fp16 import MixedPrecision
+from fastai.callback.tracker import SaveModelCallback, TerminateOnNaNCallback
 from fastai.callback.training import GradientAccumulation
 from fastai.learner import Learner
 from fastai.torch_core import set_seed
@@ -118,6 +120,15 @@ class FitResult:
     valid_losses: tuple = ()
 
 
+def _cuda_available() -> bool:
+    return torch.cuda.is_available()
+
+
+def _use_mixed_precision(protocol: TrainProtocol) -> bool:
+    """Mixed precision needs a GPU; without one the flag is ignored."""
+    return protocol.mixed_precision and _cuda_available()
+
+
 def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str:
     base = f"{protocol.run_id}-seed{seed}"
     return f"{base}-{suffix}" if suffix else base
@@ -144,6 +155,10 @@ def fit_protocol(
     it, two such calls would write to the same checkpoint file and the
     second would silently overwrite the first.
 
+    Mixed precision is applied when the protocol asks for it and a GPU exists. A
+    loss that turns NaN or infinite stops the fit, and a fit that ran fewer
+    epochs than the protocol raises instead of returning a result.
+
     extra_cbs are attached for the duration of the fit and removed after, for
     instrumentation such as timing; they must not change what is trained.
 
@@ -169,11 +184,16 @@ def fit_protocol(
     name = checkpoint_name(protocol, seed, checkpoint_suffix)
     save_cb = SaveModelCallback(monitor=CHECKPOINT_MONITOR, fname=name, with_opt=False)
     history_cb = ValidLossHistory()
+    guard_cbs = [TerminateOnNaNCallback()]
+    if _use_mixed_precision(protocol):
+        guard_cbs.append(MixedPrecision())
 
     learner.add_cb(resolution_cb)
     learner.add_cb(accumulation_cb)
     learner.add_cb(save_cb)
     learner.add_cb(history_cb)
+    for callback in guard_cbs:
+        learner.add_cb(callback)
     for callback in extra_cbs:
         learner.add_cb(callback)
     try:
@@ -183,13 +203,32 @@ def fit_protocol(
             base_lr=protocol.learning_rate,
             wd=protocol.weight_decay,
         )
+    except FileNotFoundError as error:
+        # With a NaN loss from the first epoch no checkpoint is ever written, and
+        # fastai fails reloading the best one; say what actually happened.
+        if Path(str(error.filename)).name != f"{name}.pth":
+            raise
+        raise RuntimeError(
+            f"{name}: no checkpoint was written because the loss was NaN or "
+            "infinite from the first epoch"
+        ) from error
     finally:
         for callback in extra_cbs:
+            learner.remove_cb(callback)
+        for callback in guard_cbs:
             learner.remove_cb(callback)
         learner.remove_cb(history_cb)
         learner.remove_cb(save_cb)
         learner.remove_cb(accumulation_cb)
         learner.remove_cb(resolution_cb)
+
+    expected_epochs = protocol.frozen_epochs + protocol.unfrozen_epochs
+    if len(history_cb.values) != expected_epochs:
+        raise RuntimeError(
+            f"{name}: training ended after {len(history_cb.values)} of "
+            f"{expected_epochs} epochs; a loss that is NaN or infinite stops it, "
+            "so this run must not be treated as finished"
+        )
 
     return FitResult(
         learner=learner,

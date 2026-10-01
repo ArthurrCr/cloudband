@@ -72,6 +72,10 @@ class TrainProtocol:
     scheduler: str = "one_cycle"
     frozen_epochs: int = FULL_FROZEN_EPOCHS
     unfrozen_epochs: int = FULL_UNFROZEN_EPOCHS
+    # fp16 autocast with loss scaling, used only when a GPU is present. Measured
+    # about 2.3x faster per step on a T4. It is a systems choice, identical for
+    # both architectures, and it changes the numerics slightly.
+    mixed_precision: bool = True
 
 
 def ocm_shared_protocol(learning_rate: float) -> TrainProtocol:

@@ -1,8 +1,11 @@
+from types import SimpleNamespace
+
 import numpy as np
 import pytest
 import torch
 
 from cloudband.datasets.cloudsen12 import Sample
+from cloudband.train import smoke
 from cloudband.train.data import build_dataloaders
 from cloudband.train.protocol import (
     FULL_FROZEN_EPOCHS,
@@ -117,11 +120,9 @@ def test_estimate_scales_with_the_full_dataset_size(tmp_path, monkeypatch):
 
 def test_peak_memory_is_reported_in_gib_when_cuda_is_available(tmp_path, monkeypatch):
     # Exercise the GPU branch without a GPU: only the four torch.cuda calls the
-    # module makes are replaced, so fastai keeps running on the CPU.
-    from types import SimpleNamespace
-
-    from cloudband.train import smoke
-
+    # module makes are replaced, so fastai keeps running on the CPU. The module is
+    # imported at the top of this file, like estimate_cost, so both are always the
+    # same object even if another test clears sys.modules (reload_package does).
     fake_cuda = SimpleNamespace(
         is_available=lambda: True,
         synchronize=lambda: None,
