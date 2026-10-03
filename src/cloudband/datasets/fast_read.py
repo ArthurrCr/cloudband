@@ -16,8 +16,10 @@ single request covers both.
 from __future__ import annotations
 
 import os
+import random
 import re
 import threading
+import time
 from dataclasses import dataclass
 
 import numpy as np
@@ -41,6 +43,12 @@ SUBFILE_PATTERN = re.compile(r"/vsisubfile/(\d+)_(\d+),(?:/vsicurl/)?(.+)")
 # Two files closer than this are fetched in one request, reading the bytes between
 # them and throwing them away, because a second request costs more than that.
 MERGE_GAP_BYTES = 512 * 1024
+
+# Hugging Face counts download requests in fixed five-minute windows and answers 429
+# when a window is spent. The wait it asks for is honoured, up to a window plus margin.
+RATE_LIMIT_RESET = re.compile(r"t=(\d+)")
+DEFAULT_RATE_LIMIT_WAIT = 30.0
+MAX_RATE_LIMIT_WAIT = 330.0
 
 
 @dataclass(frozen=True)
@@ -95,9 +103,17 @@ def plan_requests(segments: list[Segment]) -> list[Request]:
 class RangeFetcher:
     """Fetches byte ranges over HTTP (one connection per thread) or from a file."""
 
-    def __init__(self, token: str | None = None, timeout: float = 120.0):
+    def __init__(
+        self,
+        token: str | None = None,
+        timeout: float = 120.0,
+        max_rate_limit_retries: int = 5,
+        sleep=time.sleep,
+    ):
         self.token = token if token is not None else os.environ.get("HF_TOKEN")
         self.timeout = timeout
+        self.max_rate_limit_retries = max_rate_limit_retries
+        self._sleep = sleep
         self._local = threading.local()
 
     def _session(self) -> requests.Session:
@@ -106,6 +122,17 @@ class RangeFetcher:
             session = requests.Session()
             self._local.session = session
         return session
+
+    @staticmethod
+    def rate_limit_wait(response: requests.Response) -> float:
+        """Seconds the server asks us to wait: Retry-After, else RateLimit's t=."""
+        retry_after = response.headers.get("Retry-After", "")
+        if retry_after.isdigit():
+            wait = float(retry_after)
+        else:
+            match = RATE_LIMIT_RESET.search(response.headers.get("RateLimit", ""))
+            wait = float(match[1]) if match else DEFAULT_RATE_LIMIT_WAIT
+        return min(wait, MAX_RATE_LIMIT_WAIT)
 
     def get(self, url: str, start: int, end: int) -> bytes:
         """Bytes [start, end) of the file at url."""
@@ -117,7 +144,14 @@ class RangeFetcher:
         headers = {"Range": f"bytes={start}-{end - 1}"}
         if self.token:
             headers["Authorization"] = f"Bearer {self.token}"
-        response = self._session().get(url, headers=headers, timeout=self.timeout)
+        session = self._session()
+        response = session.get(url, headers=headers, timeout=self.timeout)
+        for _ in range(self.max_rate_limit_retries):
+            if response.status_code != 429:
+                break
+            # every thread waits out the same window, then asks again
+            self._sleep(self.rate_limit_wait(response) + random.uniform(0.0, 2.0))
+            response = session.get(url, headers=headers, timeout=self.timeout)
         # A server that ignores Range answers 200 with the whole archive; refusing
         # that is what keeps a misconfigured source from downloading gigabytes.
         if response.status_code != 206:

@@ -119,6 +119,14 @@ def make_handler():
             auth = self.headers.get("Authorization")
             server.log.append({"range": header, "auth": auth})
             data = server.blob
+            if server.rate_limited > 0:
+                server.rate_limited -= 1
+                self.send_response(429)
+                for name, value in server.rate_limit_headers.items():
+                    self.send_header(name, value)
+                self.send_header("Content-Length", "0")
+                self.end_headers()
+                return
             if server.mode == "ignore_range" or header is None:
                 self.send_response(200)
                 self.send_header("Content-Length", str(len(data)))
@@ -149,6 +157,7 @@ def serve(tmp_path):
     def start(archive):
         server = Server(("127.0.0.1", 0), make_handler())
         server.blob, server.log, server.mode = archive.blob, [], "normal"
+        server.rate_limited, server.rate_limit_headers = 0, {}
         threading.Thread(target=server.serve_forever, daemon=True).start()
         started.append(server)
         url = f"http://127.0.0.1:{server.server_address[1]}/part.taco"
@@ -340,3 +349,77 @@ def test_the_cache_stores_the_three_bands_straight_from_the_fast_reader(
 def test_the_module_exposes_what_the_notebook_imports():
     assert callable(fast_read.FastReader)
     assert fast_read.MERGE_GAP_BYTES > 0
+
+
+class Sleeps:
+    """Stands in for time.sleep, recording the waits instead of waiting."""
+
+    def __init__(self):
+        self.waits = []
+
+    def __call__(self, seconds):
+        self.waits.append(seconds)
+
+
+def test_a_429_is_waited_out_using_retry_after_and_then_succeeds(serve):
+    archive = Archive(n=1)
+    server, url, _ = serve(archive)
+    server.rate_limited, server.rate_limit_headers = 2, {"Retry-After": "7"}
+    sleeps = Sleeps()
+
+    sample = FastReader(fetcher=RangeFetcher(sleep=sleeps))(archive.table(url), 0)
+
+    assert sample.image.shape == (3, 509, 509)
+    assert len(sleeps.waits) == 2
+    assert all(7.0 <= wait <= 9.0 for wait in sleeps.waits)
+    assert len(server.log) == 3                  # two refused, one served
+
+
+def test_the_ratelimit_header_is_used_when_there_is_no_retry_after(serve):
+    archive = Archive(n=1)
+    server, url, _ = serve(archive)
+    server.rate_limited = 1
+    server.rate_limit_headers = {"RateLimit": '"api";r=0;t=41'}
+    sleeps = Sleeps()
+
+    FastReader(fetcher=RangeFetcher(sleep=sleeps))(archive.table(url), 0)
+
+    assert 41.0 <= sleeps.waits[0] <= 43.0
+
+
+def test_a_429_without_any_hint_waits_a_default_while(serve):
+    archive = Archive(n=1)
+    server, url, _ = serve(archive)
+    server.rate_limited = 1
+    sleeps = Sleeps()
+
+    FastReader(fetcher=RangeFetcher(sleep=sleeps))(archive.table(url), 0)
+
+    assert fast_read.DEFAULT_RATE_LIMIT_WAIT <= sleeps.waits[0] <= (
+        fast_read.DEFAULT_RATE_LIMIT_WAIT + 2.0
+    )
+
+
+def test_an_absurd_wait_is_capped_at_one_window(serve):
+    archive = Archive(n=1)
+    server, url, _ = serve(archive)
+    server.rate_limited, server.rate_limit_headers = 1, {"Retry-After": "86400"}
+    sleeps = Sleeps()
+
+    FastReader(fetcher=RangeFetcher(sleep=sleeps))(archive.table(url), 0)
+
+    assert sleeps.waits[0] <= fast_read.MAX_RATE_LIMIT_WAIT + 2.0
+
+
+def test_it_gives_up_after_the_retries_and_says_it_was_rate_limited(serve):
+    archive = Archive(n=1)
+    server, url, _ = serve(archive)
+    server.rate_limited, server.rate_limit_headers = 99, {"Retry-After": "1"}
+    sleeps = Sleeps()
+    fetcher = RangeFetcher(max_rate_limit_retries=3, sleep=sleeps)
+
+    with pytest.raises(OSError, match="HTTP 429"):
+        FastReader(fetcher=fetcher)(archive.table(url), 0)
+
+    assert len(sleeps.waits) == 3
+    assert len(server.log) == 4                  # the first try and three retries
