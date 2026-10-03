@@ -14,8 +14,10 @@ halves were swapped, is refused instead of silently feeding the wrong patches.
 
 from __future__ import annotations
 
+import collections
 import hashlib
 import json
+import re
 import shutil
 import time
 from collections.abc import Callable, Iterator
@@ -40,6 +42,12 @@ def table_fingerprint(table: pd.DataFrame) -> str:
     text = pd.DataFrame({column: table[column].astype(str) for column in table.columns})
     hashed = pd.util.hash_pandas_object(text, index=False)
     return hashlib.sha256(hashed.to_numpy().tobytes()).hexdigest()
+
+
+def _error_label(error: BaseException) -> str:
+    """A short, countable description: numbers are masked so equal errors group."""
+    text = re.sub(r"\d+", "#", str(error))[:100]
+    return f"{type(error).__name__}: {text}"
 
 
 def _sample_path(directory: Path, index: int) -> Path:
@@ -126,12 +134,21 @@ class LocalCache:
         backoff_seconds: float = 4.0,
         progress: Callable[[str], None] = print,
         bands_selected: bool = False,
+        rounds: int = 3,
+        pause_seconds: float = 60.0,
+        sleep: Callable[[float], None] = time.sleep,
     ) -> None:
         """Copy every sample of the table, in parallel, skipping those already copied.
 
         Safe to run again after an interruption: finished files are kept, and a
-        file is only ever renamed into place once fully written. Raises when
-        some samples still fail after the retries; running it again retries them.
+        file is only ever renamed into place once fully written.
+
+        A sample is tried retries + 1 times in a row. Samples that still fail are
+        tried again in up to `rounds` rounds, each after a pause and with half the
+        threads of the one before, because failures that come in waves are usually
+        a server limit rather than a broken sample. What still fails after the last
+        round raises an error that names the most common causes; running build again
+        retries those.
 
         bands_selected says the reader already returns only the red, green and
         near-infrared bands, as datasets.fast_read.FastReader does by default.
@@ -175,33 +192,62 @@ class LocalCache:
                 except Exception:
                     if attempt == retries:
                         raise
-                    time.sleep(backoff_seconds * (attempt + 1))
+                    sleep(backoff_seconds * (attempt + 1))
             return index
 
-        progress(
-            f"{name}: copying {len(pending)} of {len(table)} samples, "
-            f"{workers} threads"
-        )
-        started = time.perf_counter()
-        failed: list[int] = []
-        step = max(1, len(pending) // 40)
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(fetch, index): index for index in pending}
-            for done, future in enumerate(as_completed(futures), start=1):
-                if future.exception() is not None:
-                    failed.append(futures[future])
-                if done % step == 0 or done == len(pending):
-                    rate = done / (time.perf_counter() - started)
-                    remaining = (len(pending) - done) / rate / 60
-                    progress(
-                        f"{name}: {done}/{len(pending)}  {rate:.1f} samples/s  "
-                        f"about {remaining:.0f} min left"
-                    )
-        if failed:
-            raise RuntimeError(
-                f"{name}: {len(failed)} samples failed after {retries} retries "
-                f"(first: {sorted(failed)[:5]}); run build again to retry them"
+        def copy_round(indices: list[int], threads: int):
+            started = time.perf_counter()
+            failed: list[int] = []
+            errors: collections.Counter = collections.Counter()
+            step = max(1, len(indices) // 40)
+            with ThreadPoolExecutor(max_workers=threads) as pool:
+                futures = {pool.submit(fetch, index): index for index in indices}
+                for done, future in enumerate(as_completed(futures), start=1):
+                    error = future.exception()
+                    if error is not None:
+                        failed.append(futures[future])
+                        errors[_error_label(error)] += 1
+                    if done % step == 0 or done == len(indices):
+                        rate = done / (time.perf_counter() - started)
+                        left = (len(indices) - done) / rate / 60
+                        note = f"  {len(failed)} failed so far" if failed else ""
+                        progress(
+                            f"{name}: {done}/{len(indices)}  {rate:.1f} samples/s  "
+                            f"about {left:.0f} min left{note}"
+                        )
+            return failed, errors
+
+        remaining = pending
+        summary = ""
+        for round_number in range(1, rounds + 1):
+            threads = max(2, workers // 2 ** (round_number - 1))
+            if round_number == 1:
+                progress(
+                    f"{name}: copying {len(remaining)} of {len(table)} samples, "
+                    f"{threads} threads"
+                )
+            else:
+                progress(
+                    f"{name}: round {round_number}, retrying {len(remaining)} "
+                    f"samples, {threads} threads"
+                )
+            remaining, errors = copy_round(remaining, threads)
+            if not remaining:
+                return
+            summary = "; ".join(
+                f"{count}x {label}" for label, count in errors.most_common(3)
             )
+            if round_number < rounds:
+                progress(
+                    f"{name}: {len(remaining)} samples failed ({summary}); "
+                    f"waiting {pause_seconds:.0f} s before the next round"
+                )
+                sleep(pause_seconds)
+        raise RuntimeError(
+            f"{name}: {len(remaining)} samples failed after {retries} retries "
+            f"and {rounds} rounds (first: {sorted(remaining)[:5]}); most common "
+            f"errors: {summary}; run build again to retry them"
+        )
 
     def reader(self, name: str, table: pd.DataFrame) -> CachedReader:
         """A reader for the table, after checking the cache is complete and matches."""

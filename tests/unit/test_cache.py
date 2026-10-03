@@ -35,7 +35,7 @@ def build(tmp_path, table=None, **kwargs):
     table = make_table() if table is None else table
     cache = LocalCache(tmp_path / "cache")
     cache.build("train", table, read_sample=fake_read_sample, progress=quiet,
-                workers=2, backoff_seconds=0, **kwargs)
+                workers=2, backoff_seconds=0, pause_seconds=0, **kwargs)
     return cache, table
 
 
@@ -108,7 +108,7 @@ def test_a_failing_sample_is_reported_and_the_rest_are_kept(tmp_path):
 
     with pytest.raises(RuntimeError, match="1 samples failed"):
         cache.build("train", table, read_sample=broken_on_three, progress=quiet,
-                    workers=2, retries=1, backoff_seconds=0)
+                    workers=2, retries=1, backoff_seconds=0, pause_seconds=0)
 
     assert len(list(cache.split_dir("train").glob("*.npz"))) == 5
     with pytest.raises(RuntimeError, match="5 of 6"):
