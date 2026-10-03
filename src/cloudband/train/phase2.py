@@ -3,8 +3,10 @@ the full run once per seed."""
 
 from __future__ import annotations
 
+import gc
 from dataclasses import dataclass, replace
 
+import torch
 from fastai.data.core import DataLoaders
 from fastai.learner import Learner
 
@@ -183,6 +185,10 @@ def train_if_missing(
         dls, winning_protocol, lr_search, seed, model_builder, checkpoint_suffix
     )
     store.save_run(run)
+    del run
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     return "trained"
 
 

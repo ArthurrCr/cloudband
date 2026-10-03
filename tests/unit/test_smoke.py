@@ -128,6 +128,7 @@ def test_peak_memory_is_reported_in_gib_when_cuda_is_available(tmp_path, monkeyp
         synchronize=lambda: None,
         reset_peak_memory_stats=lambda: None,
         max_memory_allocated=lambda: 3 * 1024**3,
+        empty_cache=lambda: None,
     )
     monkeypatch.setattr(smoke, "torch", SimpleNamespace(cuda=fake_cuda))
     monkeypatch.chdir(tmp_path)
