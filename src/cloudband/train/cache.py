@@ -46,12 +46,13 @@ def _sample_path(directory: Path, index: int) -> Path:
     return directory / f"{index:06d}.npz"
 
 
-def _write_sample(path: Path, sample: Sample) -> None:
+def _write_sample(path: Path, sample: Sample, bands_selected: bool = False) -> None:
     partial = path.with_suffix(".partial")
+    image = sample.image if bands_selected else select_rgn(sample.image)
     with open(partial, "wb") as handle:
         np.savez(
             handle,
-            image=np.ascontiguousarray(select_rgn(sample.image)),
+            image=np.ascontiguousarray(image),
             annotation=sample.annotation,
             identifier=np.array(sample.identifier),
             roi_id=np.array(sample.roi_id or ""),
@@ -124,12 +125,16 @@ class LocalCache:
         retries: int = 4,
         backoff_seconds: float = 4.0,
         progress: Callable[[str], None] = print,
+        bands_selected: bool = False,
     ) -> None:
         """Copy every sample of the table, in parallel, skipping those already copied.
 
         Safe to run again after an interruption: finished files are kept, and a
         file is only ever renamed into place once fully written. Raises when
         some samples still fail after the retries; running it again retries them.
+
+        bands_selected says the reader already returns only the red, green and
+        near-infrared bands, as datasets.fast_read.FastReader does by default.
         """
         reader = read_sample if read_sample is not None else dataset.read_sample
         directory = self.split_dir(name)
@@ -162,7 +167,9 @@ class LocalCache:
             for attempt in range(retries + 1):
                 try:
                     _write_sample(
-                        _sample_path(directory, index), reader(table, index, True)
+                        _sample_path(directory, index),
+                        reader(table, index, True),
+                        bands_selected,
                     )
                     return index
                 except Exception:
