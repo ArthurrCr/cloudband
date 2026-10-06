@@ -168,6 +168,7 @@ def run_ocm_ensemble_resumable(
     search_seed: int | None = None,
     progress=print,
     accept_edge_winner: bool = False,
+    break_locks: bool = False,
 ) -> dict[str, str]:
     """Like run_ocm_ensemble_phase2, but saving each run and skipping saved ones.
 
@@ -187,6 +188,7 @@ def run_ocm_ensemble_resumable(
         store,
         search_seed,
         accept_edge_winner,
+        break_locks,
     )
     progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
 
@@ -205,6 +207,7 @@ def run_ocm_ensemble_resumable(
                 ),
                 store,
                 checkpoint_suffix=backbone_name,
+                break_locks=break_locks,
             )
             progress(f"{name}: {status[name]}")
     return status

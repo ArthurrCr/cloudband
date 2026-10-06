@@ -29,11 +29,14 @@ NATIVE_MAX_GSD_M = 50.0
 # Range. GEO-Bench-2 searches 1e-6 to 1e-3 for fine-tuning pretrained backbones on
 # Earth-observation segmentation (AdamW, weight decay 0.01). Swin + UPerNet is
 # published at 6e-5 (Liu et al., 2021, ICCV, ADE20K), and OCM's own training uses
-# base_lr = 1e-3 in the same fastai fine_tune call. The grid keeps the upper part of
-# the GEO-Bench-2 range and goes one step past it. fastai's fine_tune gives the
-# pretrained layers base_lr / 200 up to base_lr / 2 after unfreezing, so base_lr is
-# closer to the head's rate than to a single rate for the whole network. That
-# reasoning is this project's, not the literature's.
+# base_lr = 1e-3 in the same fastai fine_tune call. The Learner here, like OCM's, has
+# no splitter, so its optimiser has a single group of parameters: the learning rate
+# is one value for the whole network (base_lr at the peak of the first phase and
+# base_lr / 2 at the peak of the second) and nothing is frozen, which makes it
+# directly comparable with those published rates. The grid contains OCM's 1e-3 and
+# goes one step above it, and 1e-4 sits beside Swin's 6e-5. That upper step is a
+# choice of this project, not of the literature, and the edge rule below is what
+# checks it.
 #
 # Whether the optimum falls inside is checked, not assumed:
 # LrSearchManifest.winner_at_edge flags a winner on either end of the grid, and the

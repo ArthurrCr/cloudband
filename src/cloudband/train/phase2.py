@@ -53,6 +53,8 @@ def search_phase2_learning_rate(
     protocol: TrainProtocol,
     model_builder,
     search_seed: int,
+    store: RunStore | None = None,
+    break_locks: bool = False,
 ) -> tuple[LrSearchManifest, TrainProtocol]:
     """Search the learning rate once, returning the manifest and the winning
     full-budget protocol.
@@ -64,7 +66,12 @@ def search_phase2_learning_rate(
     initialization, and which learning rate the search happened to prefer.
     """
     lr_search = search_learning_rate(
-        dls, protocol, seed=search_seed, model_builder=model_builder
+        dls,
+        protocol,
+        seed=search_seed,
+        model_builder=model_builder,
+        store=store,
+        break_locks=break_locks,
     )
     winner = lr_search.winner()
     winning_protocol = full_protocol(protocol, winner.learning_rate)
@@ -78,6 +85,7 @@ def train_phase2_run(
     seed: int,
     model_builder,
     checkpoint_suffix: str = "",
+    progress_store=None,
 ) -> Phase2Run:
     """Train one full run at an already-decided winning protocol, for one seed.
 
@@ -86,7 +94,11 @@ def train_phase2_run(
     """
     learner = Learner(dls, model_builder(), loss_func=build_loss())
     fit_result = fit_protocol(
-        learner, winning_protocol, seed=seed, checkpoint_suffix=checkpoint_suffix
+        learner,
+        winning_protocol,
+        seed=seed,
+        checkpoint_suffix=checkpoint_suffix,
+        progress_store=progress_store,
     )
     manifest = build_training_manifest(fit_result, winning_protocol)
     return Phase2Run(
@@ -130,6 +142,7 @@ def load_or_search_learning_rate(
     store: RunStore,
     search_seed: int,
     accept_edge_winner: bool = False,
+    break_locks: bool = False,
 ) -> tuple[LrSearchManifest, TrainProtocol]:
     """Reuse a saved learning-rate search, or run it once and save it.
 
@@ -147,7 +160,7 @@ def load_or_search_learning_rate(
         winning_protocol = full_protocol(protocol, saved.winner().learning_rate)
     else:
         lr_search, winning_protocol = search_phase2_learning_rate(
-            dls, protocol, model_builder, search_seed
+            dls, protocol, model_builder, search_seed, store, break_locks
         )
         store.save_search(protocol, lr_search)
 
@@ -157,8 +170,9 @@ def load_or_search_learning_rate(
             f"{protocol.run_id}: the winning learning rate {winner:g} is on an end "
             f"of the grid {tuple(lr_search.grid)}, so the best rate may lie outside "
             "it. Extend the grid for both architectures and search again (delete "
-            f"{store.search_path(protocol).name}), or pass accept_edge_winner=True "
-            "to continue and say so when reporting."
+            f"{store.search_path(protocol).name}; the candidates already run are kept "
+            "and not repeated), or pass accept_edge_winner=True to continue and say "
+            "so when reporting."
         )
     return lr_search, winning_protocol
 
@@ -171,20 +185,35 @@ def train_if_missing(
     model_builder,
     store: RunStore,
     checkpoint_suffix: str = "",
+    break_locks: bool = False,
 ) -> str:
     """Train one run unless it is already saved; save it as soon as it ends.
 
-    Returns "skipped" when the run was already on durable storage, otherwise
-    "trained".
+    Returns "skipped" when the run was already on durable storage, "busy" when
+    another session is training it, and otherwise "trained". The run saves its
+    progress after every epoch, so a session that dies loses at most one epoch: the
+    next one continues from the saved state.
     """
     name = checkpoint_name(winning_protocol, seed, checkpoint_suffix)
     if store.is_done(name):
         return "skipped"
+    if not store.claim(name, break_locks=break_locks):
+        return "busy"
 
-    run = train_phase2_run(
-        dls, winning_protocol, lr_search, seed, model_builder, checkpoint_suffix
-    )
-    store.save_run(run)
+    try:
+        run = train_phase2_run(
+            dls,
+            winning_protocol,
+            lr_search,
+            seed,
+            model_builder,
+            checkpoint_suffix,
+            progress_store=store,
+        )
+        store.save_run(run)
+        store.clear_epoch_state(name)
+    finally:
+        store.release(name)
     del run
     gc.collect()
     if torch.cuda.is_available():
@@ -201,6 +230,7 @@ def run_phase2_resumable(
     search_seed: int | None = None,
     progress=print,
     accept_edge_winner: bool = False,
+    break_locks: bool = False,
 ) -> dict[str, str]:
     """Search once, then train one run per seed, saving and skipping as it goes.
 
@@ -212,7 +242,8 @@ def run_phase2_resumable(
         search_seed = seeds[0]
 
     lr_search, winning_protocol = load_or_search_learning_rate(
-        dls, protocol, model_builder, store, search_seed, accept_edge_winner
+        dls, protocol, model_builder, store, search_seed, accept_edge_winner,
+        break_locks,
     )
     progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
 
@@ -221,7 +252,8 @@ def run_phase2_resumable(
         name = checkpoint_name(winning_protocol, seed)
         progress(f"{name}: starting")
         status[name] = train_if_missing(
-            dls, winning_protocol, lr_search, seed, model_builder, store
+            dls, winning_protocol, lr_search, seed, model_builder, store,
+            break_locks=break_locks,
         )
         progress(f"{name}: {status[name]}")
     return status

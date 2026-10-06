@@ -16,6 +16,18 @@ from fastai.callback.training import GradientAccumulation
 from fastai.learner import Learner
 from fastai.torch_core import set_seed
 
+from cloudband.train.progress import (
+    STATE_VERSION,
+    EpochSaver,
+    RestoreBest,
+    capture_rng,
+    cpu_state_dict,
+    fit_phase,
+    load_optimizer_state,
+    optimizer_state,
+    phase_specs,
+    restore_rng,
+)
 from cloudband.train.protocol import TrainProtocol, patch_size_px
 from cloudband.train.resampling import sample_gsd
 
@@ -134,6 +146,26 @@ def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str
     return f"{base}-{suffix}" if suffix else base
 
 
+def _check_resume(state: dict, fingerprint: dict) -> None:
+    """Refuse to continue from progress that was made under other settings."""
+    if state.get("version") != STATE_VERSION:
+        raise RuntimeError(
+            f"{fingerprint['name']}: saved progress has format version "
+            f"{state.get('version')}, this code reads {STATE_VERSION}"
+        )
+    if state["fingerprint"] != fingerprint:
+        differing = sorted(
+            key
+            for key in fingerprint
+            if state["fingerprint"].get(key) != fingerprint[key]
+        )
+        raise RuntimeError(
+            f"{fingerprint['name']}: saved progress was made with other settings "
+            f"({', '.join(differing)}); delete it to start the run again, or "
+            "restore the settings it was made with"
+        )
+
+
 def fit_protocol(
     learner: Learner,
     protocol: TrainProtocol,
@@ -141,8 +173,16 @@ def fit_protocol(
     nodata_value: float | None = 0.0,
     checkpoint_suffix: str = "",
     extra_cbs: tuple = (),
+    progress_store=None,
 ) -> FitResult:
     """Run fine_tune with the hyperparameters and seed the protocol fixes.
+
+    fine_tune is run phase by phase here (see progress.phase_specs), which gives the
+    same training, and that is what lets a run stop after any epoch. With a
+    progress_store, the state is saved after every epoch and a run that finds one
+    continues from it. The store needs load_epoch_state(name), save_epoch_state(name,
+    state) and, optionally, heartbeat(name); RunStore has them. A saved state that
+    belongs to other settings is refused rather than silently continued.
 
     Gradient accumulation makes the actual optimiser step match the
     protocol's effective batch size regardless of the dataloader's own
@@ -188,6 +228,49 @@ def fit_protocol(
     if _use_mixed_precision(protocol):
         guard_cbs.append(MixedPrecision())
 
+    fingerprint = {
+        "name": name,
+        "seed": seed,
+        "learning_rate": protocol.learning_rate,
+        "frozen_epochs": protocol.frozen_epochs,
+        "unfrozen_epochs": protocol.unfrozen_epochs,
+        "weight_decay": protocol.weight_decay,
+        "effective_batch_size": protocol.effective_batch_size,
+        "min_gsd_m": protocol.min_gsd_m,
+        "max_gsd_m": protocol.max_gsd_m,
+    }
+    resume = progress_store.load_epoch_state(name) if progress_store else None
+    if resume is not None:
+        _check_resume(resume, fingerprint)
+
+    best_path = Path(learner.path) / learner.model_dir / f"{name}.pth"
+
+    def snapshot(phase: str, epochs_done: int) -> dict:
+        """Everything needed to continue from the end of this epoch."""
+        started = epochs_done > 0
+        weights = None
+        if started and best_path.is_file():
+            weights = torch.load(best_path, map_location="cpu", weights_only=False)
+        return {
+            "version": STATE_VERSION,
+            "fingerprint": fingerprint,
+            "phase": phase,
+            "epochs_done": epochs_done,
+            "model": cpu_state_dict(learner.model),
+            "opt": optimizer_state(learner.opt) if started else None,
+            "best": float(save_cb.best) if started else float("inf"),
+            "best_weights": weights,
+            "valid_losses": list(history_cb.values),
+            "gsd_history": list(resolution_cb.gsd_history),
+            "rng": capture_rng(resolution_cb),
+        }
+
+    def save(state: dict) -> None:
+        progress_store.save_epoch_state(name, state)
+        heartbeat = getattr(progress_store, "heartbeat", None)
+        if heartbeat is not None:
+            heartbeat(name)
+
     learner.add_cb(resolution_cb)
     learner.add_cb(accumulation_cb)
     learner.add_cb(save_cb)
@@ -197,12 +280,44 @@ def fit_protocol(
     for callback in extra_cbs:
         learner.add_cb(callback)
     try:
-        learner.fine_tune(
-            epochs=protocol.unfrozen_epochs,
-            freeze_epochs=protocol.frozen_epochs,
-            base_lr=protocol.learning_rate,
-            wd=protocol.weight_decay,
-        )
+        specs = phase_specs(protocol)
+        first_phase = 0
+        done = 0
+        if resume is not None:
+            learner.model.load_state_dict(resume["model"])
+            history_cb.values = list(resume["valid_losses"])
+            resolution_cb.gsd_history = list(resume["gsd_history"])
+            first_phase = [spec.name for spec in specs].index(resume["phase"])
+            done = resume["epochs_done"]
+
+        for index, spec in enumerate(specs):
+            if index < first_phase:
+                continue
+            already = done if index == first_phase else 0
+            (learner.freeze if spec.name == "frozen" else learner.unfreeze)()
+            callbacks = []
+            if resume is not None and index == first_phase and already > 0:
+                if resume["opt"] is not None:
+                    load_optimizer_state(learner.opt, resume["opt"])
+                callbacks.append(
+                    RestoreBest(
+                        save_cb, resume["best"], resume["best_weights"], best_path
+                    )
+                )
+            if resume is not None and index == first_phase:
+                restore_rng(resume["rng"], resolution_cb)
+            if progress_store is not None:
+                callbacks.append(EpochSaver(snapshot, save, spec.name, already))
+            if already >= spec.epochs:
+                # stopped after the last epoch of this phase: do what the end of a
+                # fit does, which is to go back to the best weights of the phase
+                if resume["best_weights"] is not None:
+                    learner.model.load_state_dict(resume["best_weights"])
+                save_cb.best = resume["best"]
+            else:
+                fit_phase(learner, spec, already, protocol.weight_decay, callbacks)
+            if progress_store is not None and index + 1 < len(specs):
+                save(snapshot(specs[index + 1].name, 0))
     except FileNotFoundError as error:
         # With a NaN loss from the first epoch no checkpoint is ever written, and
         # fastai fails reloading the best one; say what actually happened.
