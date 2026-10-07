@@ -158,7 +158,11 @@ def optimizer_state(opt) -> dict:
 
 
 def load_optimizer_state(opt, state: dict) -> None:
-    """Load a saved optimiser state and put its tensors where the parameters are."""
+    """Load a saved optimiser state and put its tensors where the parameters are.
+
+    The model must already be on the device it will train on: the state follows the
+    parameters, wherever they are when this runs.
+    """
     opt.load_state_dict(state)
     for parameter, entry in opt.state.items():
         for key, value in entry.items():

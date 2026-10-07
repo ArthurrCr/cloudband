@@ -201,9 +201,11 @@ class RunStore:
         once to see that it is still this session's.
         """
         info = self.lock_info(name)
-        if info is not None and info["owner"] != self.session_id and not break_locks:
-            if time.time() - info["heartbeat"] < lease_seconds:
-                return False
+        held_by_another = (
+            info is not None and info["owner"] != self.session_id and not break_locks
+        )
+        if held_by_another and time.time() - info["heartbeat"] < lease_seconds:
+            return False
         self._write_lock(name)
         sleep(confirm_seconds)
         confirmed = self.lock_info(name)

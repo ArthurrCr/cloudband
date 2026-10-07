@@ -5,6 +5,7 @@ import pytest
 import torch
 from fastai.callback.core import Callback
 from fastai.learner import Learner
+from fastai.torch_core import default_device
 
 from cloudband.datasets.cloudsen12 import Sample
 from cloudband.train.data import build_dataloaders
@@ -180,7 +181,7 @@ def test_a_saved_state_keeps_the_weights_of_its_own_epoch(reference):
 
 
 def test_the_schedule_is_continued_where_it_was_left():
-    schedule = lambda position: position * 10   # noqa: E731
+    schedule = lambda position: position * 10
 
     rest = continue_schedule(schedule, done=3, total=10)
 
@@ -196,3 +197,62 @@ def test_the_phases_are_the_ones_fine_tune_builds():
     assert (second.epochs, second.pct_start, second.div) == (UNFROZEN, 0.3, 5.0)
     assert first.lr_max == slice(1e-3)
     assert second.lr_max == slice(1e-3 / 2 / 100, 1e-3 / 2)
+
+def test_the_model_is_on_its_device_before_the_optimiser_state_is_loaded(
+    reference, tmp_path, monkeypatch
+):
+    # fastai moves the model to the GPU only when a fit starts; loading the state
+    # before that left the momentum buffers on the CPU (a crash on the GPU that a
+    # CPU-only run cannot show), so what is checked here is the order of the calls
+    _, _, ref_store = reference
+    state = next(s for s in ref_store.states if s["opt"] is not None)
+    calls = []
+
+    from cloudband.train import loop
+
+    real_load = loop.load_optimizer_state
+
+    def spy_load(opt, saved):
+        calls.append("load_optimizer_state")
+        return real_load(opt, saved)
+
+    monkeypatch.setattr(loop, "load_optimizer_state", spy_load)
+    monkeypatch.chdir(tmp_path)
+    learner = Learner(make_dls(), Tiny(), loss_func=build_loss())
+    real_to = learner.model.to
+
+    def spy_to(*args, **kwargs):
+        calls.append(("to", str(args[0])))
+        return real_to(*args, **kwargs)
+
+    monkeypatch.setattr(learner.model, "to", spy_to)
+
+    fit_protocol(
+        learner, make_protocol(), seed=0, progress_store=MemoryStore(resume_from=state)
+    )
+
+    device = str(getattr(learner.dls, "device", default_device()))
+    assert ("to", device) in calls
+    assert calls.index(("to", device)) < calls.index("load_optimizer_state")
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a GPU")
+def test_resuming_on_the_gpu_keeps_the_optimiser_state_on_the_gpu(
+    reference, tmp_path, monkeypatch
+):
+    _, _, ref_store = reference
+    state = next(s for s in ref_store.states if s["opt"] is not None)
+    monkeypatch.chdir(tmp_path)
+    dls = make_dls()
+    dls.to(torch.device("cuda"))
+    learner = Learner(dls, Tiny(), loss_func=build_loss())
+
+    fit_protocol(
+        learner, make_protocol(), seed=0, progress_store=MemoryStore(resume_from=state)
+    )
+
+    assert next(learner.model.parameters()).device.type == "cuda"
+    for parameter, entry in learner.opt.state.items():
+        for value in entry.values():
+            if isinstance(value, torch.Tensor):
+                assert value.device == parameter.device

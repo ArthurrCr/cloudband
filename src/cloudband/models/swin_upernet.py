@@ -5,8 +5,12 @@ from __future__ import annotations
 import torch
 from fastai.data.core import DataLoaders
 from fastai.learner import Learner
-from transformers import AutoBackbone, SwinConfig, UperNetConfig
-from transformers import UperNetForSemanticSegmentation
+from transformers import (
+    AutoBackbone,
+    SwinConfig,
+    UperNetConfig,
+    UperNetForSemanticSegmentation,
+)
 
 from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS

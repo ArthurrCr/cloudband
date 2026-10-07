@@ -15,13 +15,13 @@ from cloudband.train.loop import FitResult, checkpoint_name, fit_protocol
 from cloudband.train.loss import build_loss
 from cloudband.train.lr_search import search_learning_rate
 from cloudband.train.manifest import build_training_manifest
-from cloudband.train.store import RunStore
 from cloudband.train.protocol import (
     FULL_FROZEN_EPOCHS,
     FULL_UNFROZEN_EPOCHS,
     LrSearchManifest,
     TrainProtocol,
 )
+from cloudband.train.store import RunStore
 
 
 @dataclass(frozen=True)
