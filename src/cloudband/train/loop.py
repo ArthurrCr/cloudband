@@ -5,16 +5,16 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 
+import fastai.callback.schedule  # noqa: F401  patches fine_tune onto Learner
 import numpy as np
 import torch
 import torch.nn.functional as F
-import fastai.callback.schedule  # noqa: F401  patches fine_tune onto Learner
 from fastai.callback.core import Callback
 from fastai.callback.fp16 import MixedPrecision
 from fastai.callback.tracker import SaveModelCallback, TerminateOnNaNCallback
 from fastai.callback.training import GradientAccumulation
 from fastai.learner import Learner
-from fastai.torch_core import set_seed
+from fastai.torch_core import default_device, set_seed
 
 from cloudband.train.progress import (
     STATE_VERSION,
@@ -284,6 +284,12 @@ def fit_protocol(
         first_phase = 0
         done = 0
         if resume is not None:
+            # fastai only moves the model to the GPU when a fit starts. The
+            # optimiser state is loaded before that and is placed where the
+            # parameters are at that moment, so the model goes to the device first;
+            # otherwise the momentum buffers stay on the CPU and the first step
+            # fails with "found at least two devices".
+            learner.model.to(getattr(learner.dls, "device", default_device()))
             learner.model.load_state_dict(resume["model"])
             history_cb.values = list(resume["valid_losses"])
             resolution_cb.gsd_history = list(resume["gsd_history"])
