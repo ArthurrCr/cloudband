@@ -208,15 +208,16 @@ def test_the_model_is_on_its_device_before_the_optimiser_state_is_loaded(
     state = next(s for s in ref_store.states if s["opt"] is not None)
     calls = []
 
-    from cloudband.train import loop
-
-    real_load = loop.load_optimizer_state
+    # patch the module fit_protocol itself runs in: other tests clear sys.modules
+    # (reload_package), so importing the module by name here could give another copy
+    namespace = fit_protocol.__globals__
+    real_load = namespace["load_optimizer_state"]
 
     def spy_load(opt, saved):
         calls.append("load_optimizer_state")
         return real_load(opt, saved)
 
-    monkeypatch.setattr(loop, "load_optimizer_state", spy_load)
+    monkeypatch.setitem(namespace, "load_optimizer_state", spy_load)
     monkeypatch.chdir(tmp_path)
     learner = Learner(make_dls(), Tiny(), loss_func=build_loss())
     real_to = learner.model.to
