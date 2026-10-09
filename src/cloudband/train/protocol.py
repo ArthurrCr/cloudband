@@ -16,7 +16,7 @@ SHARED_MAX_GSD_M = 22.0
 NATIVE_MIN_GSD_M = 9.0
 NATIVE_MAX_GSD_M = 50.0
 
-# Learning-rate search grid: five points about half a decade apart in log10 (the
+# Learning-rate search grid: six points about half a decade apart in log10 (the
 # usual 1 and 3 per decade, so the steps are 0.48 and 0.52 rather than exactly 0.5).
 #
 # Protocol. Each architecture is searched on the same space with the same budget,
@@ -33,15 +33,20 @@ NATIVE_MAX_GSD_M = 50.0
 # no splitter, so its optimiser has a single group of parameters: the learning rate
 # is one value for the whole network (base_lr at the peak of the first phase and
 # base_lr / 2 at the peak of the second) and nothing is frozen, which makes it
-# directly comparable with those published rates. The grid contains OCM's 1e-3 and
-# goes one step above it, and 1e-4 sits beside Swin's 6e-5. That upper step is a
-# choice of this project, not of the literature, and the edge rule below is what
-# checks it.
+# directly comparable with those published rates. The grid contains OCM's 1e-3, and
+# 1e-4 sits beside Swin's 6e-5. The points above 1e-3 are a choice of this project,
+# not of the literature, and the edge rule below is what checks them.
 #
 # Whether the optimum falls inside is checked, not assumed:
 # LrSearchManifest.winner_at_edge flags a winner on either end of the grid, and the
 # search then has to be extended for both architectures and run again.
-LR_SEARCH_GRID = (3e-5, 1e-4, 3e-4, 1e-3, 3e-3)
+#
+# History. The first grid ended at 3e-3. The OCM proxy search found its lowest
+# validation loss there (0.406, 0.357, 0.338, 0.299 and 0.283 at 3e-5, 1e-4, 3e-4,
+# 1e-3 and 3e-3), so the edge rule fired and 1e-2 was added, for both architectures.
+# The candidates already run are kept. A candidate whose loss turns NaN or infinite
+# is recorded with an infinite loss and so cannot win.
+LR_SEARCH_GRID = (3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2)
 # Epoch budget, the same for both architectures (ADR-0023 D5). The full run
 # follows the OmniCloudMask training notebook (training/Train OCM models.ipynb,
 # the non-demo branch: freeze_epochs = 15, unfrozen_epochs = 15). A proxy run is a

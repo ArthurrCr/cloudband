@@ -9,7 +9,7 @@ import torch
 from fastai.data.core import DataLoaders
 from fastai.learner import Learner
 
-from cloudband.train.loop import checkpoint_name, fit_protocol
+from cloudband.train.loop import TrainingDiverged, checkpoint_name, fit_protocol
 from cloudband.train.loss import build_loss
 from cloudband.train.protocol import (
     LR_SEARCH_GRID,
@@ -85,14 +85,22 @@ def search_learning_rate(
             continue
         try:
             learner = Learner(dls, model_builder(), loss_func=build_loss())
-            result = fit_protocol(
-                learner, candidate, seed=seed, checkpoint_suffix=suffix,
-                progress_store=store,
-            )
+            try:
+                result = fit_protocol(
+                    learner, candidate, seed=seed, checkpoint_suffix=suffix,
+                    progress_store=store,
+                )
+                val_loss = result.best_val_loss
+            except TrainingDiverged as error:
+                # a rate that blows up is a result of the search, the worst one,
+                # not a reason to stop it
+                print(f"{name}: diverged, recorded as infinite loss ({error})")
+                val_loss = float("inf")
+                result = None
             run = LrSearchRun(
                 run_id=candidate.run_id,
                 learning_rate=learning_rate,
-                val_loss=result.best_val_loss,
+                val_loss=val_loss,
             )
             if store:
                 store.save_search_run(protocol, run, budget, seed)

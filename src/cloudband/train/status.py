@@ -173,7 +173,7 @@ def search_rows(
     for learning_rate in sorted(set(grid) | set(found)):
         row = {"model": protocol.architecture, "lr": learning_rate}
         if learning_rate in found:
-            note = ""
+            note = "diverged (infinite loss)" if found[learning_rate] == float("inf") else ""
             if learning_rate == winner:
                 note = "winner" + (" (edge of the grid)" if final.winner_at_edge() else "")
             row.update(

@@ -158,7 +158,7 @@ def test_a_search_in_two_pieces_shows_done_running_and_missing_candidates(tmp_pa
 
     rows = [r for r in status_report(store, plans()).search if r["model"] == "ocm"]
 
-    assert [r["state"] for r in rows] == ["done", "done", "running", "not started", "not started"]
+    assert [r["state"] for r in rows] == ["done", "done", "running"] + ["not started"] * (len(LR_SEARCH_GRID) - 3)
     assert rows[1]["best_val_loss"] == 1.1
     assert rows[2]["epochs"] == "3/10"
 
@@ -166,8 +166,8 @@ def test_a_search_in_two_pieces_shows_done_running_and_missing_candidates(tmp_pa
 def test_a_finished_search_names_its_winner_and_warns_about_the_edge(tmp_path):
     store = make_store(tmp_path)
     ocm, swin = protocols()
-    save_search(store, ocm, (1.5, 1.2, 1.0, 1.1, 1.3))
-    save_search(store, swin, (0.9, 1.2, 1.3, 1.4, 1.5))
+    save_search(store, ocm, (1.5, 1.2, 1.0, 1.1, 1.3, 1.4))
+    save_search(store, swin, (0.9, 1.2, 1.3, 1.4, 1.5, 1.6))
 
     report = status_report(store, plans())
     notes = {r["model"]: r["note"] for r in report.search if r["note"]}
@@ -212,3 +212,15 @@ def test_the_report_changes_nothing_in_the_folder(tmp_path):
     status_report(store, plans())
 
     assert sorted((p, p.stat().st_mtime_ns) for p in tmp_path.rglob("*") if p.is_file()) == before
+
+
+def test_a_candidate_that_diverged_is_marked_as_such_and_cannot_win(tmp_path):
+    store = make_store(tmp_path)
+    ocm, swin = protocols()
+    save_search(store, ocm, (1.5, 1.2, 1.0, 1.1, 1.3, float("inf")))
+    save_search(store, swin, (1.5, 1.2, 1.0, 1.1, 1.3, float("inf")))
+
+    rows = [r for r in status_report(store, plans()).search if r["model"] == "ocm"]
+
+    assert rows[-1]["note"] == "diverged (infinite loss)"
+    assert rows[2]["note"] == "winner"

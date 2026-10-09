@@ -146,6 +146,10 @@ def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str
     return f"{base}-{suffix}" if suffix else base
 
 
+class TrainingDiverged(RuntimeError):
+    """The loss became NaN or infinite, so the run did not finish its epochs."""
+
+
 def _check_resume(state: dict, fingerprint: dict) -> None:
     """Refuse to continue from progress that was made under other settings."""
     if state.get("version") != STATE_VERSION:
@@ -329,7 +333,7 @@ def fit_protocol(
         # fastai fails reloading the best one; say what actually happened.
         if Path(str(error.filename)).name != f"{name}.pth":
             raise
-        raise RuntimeError(
+        raise TrainingDiverged(
             f"{name}: no checkpoint was written because the loss was NaN or "
             "infinite from the first epoch"
         ) from error
@@ -345,7 +349,7 @@ def fit_protocol(
 
     expected_epochs = protocol.frozen_epochs + protocol.unfrozen_epochs
     if len(history_cb.values) != expected_epochs:
-        raise RuntimeError(
+        raise TrainingDiverged(
             f"{name}: training ended after {len(history_cb.values)} of "
             f"{expected_epochs} epochs; a loss that is NaN or infinite stops it, "
             "so this run must not be treated as finished"

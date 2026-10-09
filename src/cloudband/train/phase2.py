@@ -18,6 +18,7 @@ from cloudband.train.manifest import build_training_manifest
 from cloudband.train.protocol import (
     FULL_FROZEN_EPOCHS,
     FULL_UNFROZEN_EPOCHS,
+    LR_SEARCH_GRID,
     LrSearchManifest,
     TrainProtocol,
 )
@@ -155,6 +156,10 @@ def load_or_search_learning_rate(
     architectures and search again.
     """
     saved = store.load_search(protocol)
+    if saved is not None and tuple(saved.grid) != tuple(LR_SEARCH_GRID):
+        # the grid was extended after this search: the candidates already run are
+        # kept in the store, so only the new ones are run
+        saved = None
     if saved is not None:
         lr_search = saved
         winning_protocol = full_protocol(protocol, saved.winner().learning_rate)

@@ -18,7 +18,7 @@ from cloudband.train.protocol import (
 )
 from cloudband.train.store import RunStore
 
-GRID = (3e-5, 1e-4, 3e-4, 1e-3, 3e-3)
+GRID = LR_SEARCH_GRID
 PATCH = 32
 
 
@@ -30,24 +30,24 @@ def search_with_winner(winner, grid=GRID):
     return LrSearchManifest(architecture="swin", runs=runs, grid=grid)
 
 
-def test_the_default_grid_is_five_points_about_half_a_decade_apart():
+def test_the_default_grid_is_six_points_about_half_a_decade_apart():
     steps = [math.log10(b / a) for a, b in zip(LR_SEARCH_GRID, LR_SEARCH_GRID[1:])]
 
     # 1 and 3 per decade rather than 1 and 3.16, so steps are 0.48 and 0.52
-    assert len(LR_SEARCH_GRID) == 5
-    assert steps == pytest.approx([0.5] * 4, abs=0.03)
+    assert len(LR_SEARCH_GRID) == 6
+    assert steps == pytest.approx([0.5] * 5, abs=0.03)
 
 
 def test_the_grid_contains_the_rate_ocm_trains_with():
     assert 1e-3 in LR_SEARCH_GRID
 
 
-@pytest.mark.parametrize("winner", [3e-5, 3e-3])
+@pytest.mark.parametrize("winner", [3e-5, 1e-2])
 def test_a_winner_on_either_end_is_flagged(winner):
     assert search_with_winner(winner).winner_at_edge() is True
 
 
-@pytest.mark.parametrize("winner", [1e-4, 3e-4, 1e-3])
+@pytest.mark.parametrize("winner", [1e-4, 3e-4, 1e-3, 3e-3])
 def test_a_winner_inside_the_grid_is_not_flagged(winner):
     assert search_with_winner(winner).winner_at_edge() is False
 
@@ -135,7 +135,7 @@ def test_the_run_stops_before_training_when_the_winner_is_on_an_edge(
 
 def test_the_same_stop_happens_when_the_saved_search_is_reloaded(setup, monkeypatch):
     dls, store, protocol = setup
-    store.save_search(protocol, search_with_winner(3e-3))
+    store.save_search(protocol, search_with_winner(1e-2))
 
     with pytest.raises(RuntimeError, match="3e-05|0.003|3e-03"):
         phase2.run_phase2_resumable(
@@ -169,7 +169,7 @@ def test_an_interior_winner_trains_without_any_flag(setup, monkeypatch):
 def test_the_ocm_entry_point_enforces_the_same_rule(setup, monkeypatch):
     dls, store, _ = setup
     monkeypatch.setattr(ocm_module, "build_unet", lambda *a, **k: Tiny())
-    force_winner(monkeypatch, 3e-3)
+    force_winner(monkeypatch, 1e-2)
     protocol = TrainProtocol(
         run_id="ocm-rgn-cs12-shared",
         architecture="ocm",
