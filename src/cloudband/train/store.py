@@ -34,6 +34,10 @@ class RunStore:
     source_dir: Path
     progress_dir: Path | None = None
     session_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
+    # the locks this session holds: name -> (when it started, when it last wrote).
+    # Kept in memory because a mounted Drive can return an old copy of a file that
+    # was just replaced, so what this session wrote must not depend on reading it back.
+    _held: dict = field(default_factory=dict, init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "results_dir", Path(self.results_dir))
@@ -171,7 +175,7 @@ class RunStore:
         except (json.JSONDecodeError, OSError):
             return None
 
-    def _write_lock(self, name: str, started: float | None = None) -> None:
+    def _write_lock(self, name: str, started: float | None = None) -> float:
         now = time.time()
         record = {
             "owner": self.session_id,
@@ -182,6 +186,35 @@ class RunStore:
         partial = path.with_suffix(".lock.partial")
         partial.write_text(json.dumps(record))
         partial.replace(path)
+        self._held[name] = (record["started"], now)
+        return now
+
+    def _confirmed(
+        self,
+        name: str,
+        written_at: float,
+        attempts: int,
+        poll_seconds: float,
+        sleep: Callable[[float], None],
+    ) -> bool:
+        """Did the lock just written stay this session's?
+
+        A mounted Drive can answer with the file as it was before the write, or with
+        nothing, for a while after it was replaced. That old copy is no proof that
+        another session took the run: only a lock written by another session at or
+        after this write is. So an old or unreadable copy is read again, and if
+        nothing newer from another session ever shows up, the run is this session's.
+        """
+        for attempt in range(attempts):
+            info = self.lock_info(name)
+            if info is not None:
+                if info["owner"] == self.session_id:
+                    return True
+                if info["heartbeat"] >= written_at:
+                    return False
+            if attempt + 1 < attempts:
+                sleep(poll_seconds)
+        return True
 
     def claim(
         self,
@@ -190,6 +223,7 @@ class RunStore:
         break_locks: bool = False,
         confirm_seconds: float = 2.0,
         sleep: Callable[[float], None] = time.sleep,
+        attempts: int = 8,
     ) -> bool:
         """Take a run for this session. False when another session has it.
 
@@ -198,7 +232,8 @@ class RunStore:
         for lease_seconds is stale and is taken over. break_locks takes over any
         lock, for when it is known that the other session is gone. Drive cannot
         make this atomic across machines, so after writing the lock it is read back
-        once to see that it is still this session's.
+        to see that it is still this session's, allowing the Drive a few attempts to
+        show the new file (see _confirmed).
         """
         info = self.lock_info(name)
         held_by_another = (
@@ -206,18 +241,40 @@ class RunStore:
         )
         if held_by_another and time.time() - info["heartbeat"] < lease_seconds:
             return False
-        self._write_lock(name)
+        written_at = self._write_lock(name)
         sleep(confirm_seconds)
-        confirmed = self.lock_info(name)
-        return confirmed is not None and confirmed["owner"] == self.session_id
+        if self._confirmed(name, written_at, attempts, confirm_seconds, sleep):
+            return True
+        self._held.pop(name, None)
+        return False
 
     def heartbeat(self, name: str) -> None:
+        held = self._held.get(name)
+        if held is None:
+            return
+        started, written_at = held
         info = self.lock_info(name)
-        if info is not None and info["owner"] == self.session_id:
-            self._write_lock(name, started=info["started"])
+        if (
+            info is not None
+            and info["owner"] != self.session_id
+            and info["heartbeat"] >= written_at
+        ):
+            return                       # another session took the run over
+        self._write_lock(name, started=started)
 
     def release(self, name: str) -> None:
+        held = self._held.pop(name, None)
         info = self.lock_info(name)
+        if held is not None:
+            _, written_at = held
+            taken_over = (
+                info is not None
+                and info["owner"] != self.session_id
+                and info["heartbeat"] >= written_at
+            )
+            if not taken_over:
+                self.lock_path(name).unlink(missing_ok=True)
+            return
         if info is not None and info["owner"] == self.session_id:
             self.lock_path(name).unlink(missing_ok=True)
 
