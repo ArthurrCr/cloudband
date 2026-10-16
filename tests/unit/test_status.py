@@ -156,7 +156,7 @@ def test_a_search_in_two_pieces_shows_done_running_and_missing_candidates(tmp_pa
     in_flight(store, third, [1.4, 1.3, 1.2], lr=LR_SEARCH_GRID[2])
     assert store.claim(third, sleep=lambda _: None)
 
-    rows = [r for r in status_report(store, plans()).search if r["model"] == "ocm"]
+    rows = [r for r in status_report(store, plans()).search if r["model"] == f"OCM {BACKBONE}"]
 
     assert [r["state"] for r in rows] == ["done", "done", "running"] + ["not started"] * (len(LR_SEARCH_GRID) - 3)
     assert rows[1]["best_val_loss"] == 1.1
@@ -172,8 +172,8 @@ def test_a_finished_search_names_its_winner_and_warns_about_the_edge(tmp_path):
     report = status_report(store, plans())
     notes = {r["model"]: r["note"] for r in report.search if r["note"]}
 
-    assert notes["ocm"] == "winner"
-    assert notes["swin"] == "winner (edge of the grid)"
+    assert notes[f"OCM {BACKBONE}"] == "winner"
+    assert notes["Swin"] == "winner (edge of the grid)"
     assert "winner 0.0003" in report.summary
     # runs that have not started take the winning rate as the one they will use
     assert row(report, f"OCM {BACKBONE}", 0)["lr"] == LR_SEARCH_GRID[2]
@@ -220,7 +220,7 @@ def test_a_candidate_that_diverged_is_marked_as_such_and_cannot_win(tmp_path):
     save_search(store, ocm, (1.5, 1.2, 1.0, 1.1, 1.3, float("inf")))
     save_search(store, swin, (1.5, 1.2, 1.0, 1.1, 1.3, float("inf")))
 
-    rows = [r for r in status_report(store, plans()).search if r["model"] == "ocm"]
+    rows = [r for r in status_report(store, plans()).search if r["model"] == f"OCM {BACKBONE}"]
 
     assert rows[-1]["note"] == "diverged (infinite loss)"
     assert rows[2]["note"] == "winner"

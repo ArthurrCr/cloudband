@@ -8,7 +8,7 @@ from cloudband.datasets.cloudsen12 import Sample
 from cloudband.train import phase2
 from cloudband.train.data import build_dataloaders
 from cloudband.train.loop import checkpoint_name
-from cloudband.train.lr_search import search_learning_rate
+from cloudband.train.lr_search import SearchBusy, search_learning_rate
 from cloudband.train.phase2 import full_protocol, train_if_missing
 from cloudband.train.protocol import LrSearchManifest, LrSearchRun, ocm_shared_protocol
 from cloudband.train.store import RunStore
@@ -243,3 +243,13 @@ def test_a_candidate_another_session_runs_stops_the_search_with_a_clear_error(se
     # the other two candidates were still done, and are kept
     assert store.load_search_run(protocol(), 1e-3, (1, 1), 0) is not None
     assert store.load_search_run(protocol(), 1e-2, (1, 1), 0) is not None
+
+def test_the_busy_search_error_can_be_told_apart_from_other_failures(setup):
+    dls, store = setup
+    rival = RunStore(store.results_dir, store.checkpoint_dir, store.source_dir)
+    name = checkpoint_name(replace(protocol(), frozen_epochs=1, unfrozen_epochs=1),
+                           0, "lrsearch-0.003")
+    rival.claim(name, sleep=lambda s: None)
+
+    with pytest.raises(SearchBusy):
+        run_search(dls, store, Tiny)

@@ -21,6 +21,10 @@ from cloudband.train.protocol import (
 )
 
 
+class SearchBusy(RuntimeError):
+    """Some candidates are being run by another session, so the search is not complete."""
+
+
 def proxy_protocol(
     protocol: TrainProtocol,
     learning_rate: float,
@@ -115,7 +119,7 @@ def search_learning_rate(
                 store.release(name)
 
     if busy:
-        raise RuntimeError(
+        raise SearchBusy(
             f"{protocol.run_id}: the candidates {busy} are being run by another "
             "session. Run this cell again when it has finished them, or pass "
             "break_locks=True if that session is gone."

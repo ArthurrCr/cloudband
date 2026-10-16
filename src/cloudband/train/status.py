@@ -13,6 +13,7 @@ renews any more (the next training cell continues it), and "not started" otherwi
 from __future__ import annotations
 
 import json
+import math
 import pickle
 import time
 from dataclasses import dataclass
@@ -41,6 +42,13 @@ class Plan:
     label: str
     protocol: TrainProtocol
     suffix: str = ""
+    # the protocol the learning-rate search of this model runs under; its own files
+    # and candidates. None means the search is the one of `protocol` itself.
+    search_protocol: TrainProtocol | None = None
+
+    @property
+    def search(self) -> TrainProtocol:
+        return self.search_protocol or self.protocol
 
 
 @dataclass(frozen=True)
@@ -143,17 +151,38 @@ def run_row(
                 else ""
             ),
         )
-        return row
+        return _mark_rate(row, name, planned_lr)
     row.update(_in_flight(store, name, total, now))
     if row["lr"] is None:
         row["lr"] = planned_lr
+    return _mark_rate(row, name, planned_lr)
+
+
+def _mark_rate(row: dict, name: str, chosen_lr: float | None) -> dict:
+    """Say which rate a run was trained at and whether it is the one the search chose.
+
+    A run trained at another rate cannot be continued or kept: the runs of one model
+    must all share the rate its search chose.
+    """
+    trained_lr = row["lr"] if row["state"] != "not started" else None
+    other = (
+        trained_lr is not None
+        and chosen_lr is not None
+        and not math.isclose(trained_lr, chosen_lr, rel_tol=1e-9)
+    )
+    row.update(name=name, chosen_lr=chosen_lr, at_other_rate=other)
+    if other:
+        row["note"] = (
+            f"trained at {trained_lr:g} but the search chose {chosen_lr:g}: "
+            "discard it before going on"
+        )
     return row
 
 
 def search_rows(
-    store: RunStore, protocol: TrainProtocol, now: float | None = None
+    store: RunStore, protocol: TrainProtocol, label: str, now: float | None = None
 ) -> list[dict]:
-    """One row per learning-rate candidate of an architecture."""
+    """One row per learning-rate candidate of a model's search."""
     now = time.time() if now is None else now
     seed = protocol.seeds[0]
     total = PROXY_FROZEN_EPOCHS + PROXY_UNFROZEN_EPOCHS
@@ -171,7 +200,7 @@ def search_rows(
 
     rows = []
     for learning_rate in sorted(set(grid) | set(found)):
-        row = {"model": protocol.architecture, "lr": learning_rate}
+        row = {"model": label, "lr": learning_rate}
         if learning_rate in found:
             note = "diverged (infinite loss)" if found[learning_rate] == float("inf") else ""
             if learning_rate == winner:
@@ -192,15 +221,15 @@ def search_rows(
 
 def _summary(search: list[dict], runs: list[dict], plans: list[Plan]) -> str:
     lines = ["Learning-rate search"]
-    for architecture in dict.fromkeys(row["model"] for row in search):
-        mine = [row for row in search if row["model"] == architecture]
+    for model in dict.fromkeys(row["model"] for row in search):
+        mine = [row for row in search if row["model"] == model]
         done = sum(row["state"] == "done" for row in mine)
         winner = next((row for row in mine if row["note"].startswith("winner")), None)
         tail = (
             f", winner {winner['lr']:g}{' (edge of the grid)' if 'edge' in winner['note'] else ''}"
             if winner else ""
         )
-        lines.append(f"  {architecture}: {done} of {len(mine)} candidates done{tail}")
+        lines.append(f"  {model}: {done} of {len(mine)} candidates done{tail}")
 
     lines.append("Full runs")
     for plan in plans:
@@ -242,6 +271,12 @@ def _summary(search: list[dict], runs: list[dict], plans: list[Plan]) -> str:
     ]
     if paused:
         lines.append("Paused, to continue: " + "; ".join(paused))
+    other = [row for row in runs if row["at_other_rate"]]
+    if other:
+        lines.append(
+            f"At another rate than the chosen one: {len(other)} run(s), to discard before "
+            "going on: " + "; ".join(f"{row['model']} seed {row['seed']}" for row in other)
+        )
     flagged = [row for row in runs if row["note"].startswith("best epoch")]
     if flagged:
         lines.append(f"Still improving at the end: {len(flagged)} finished run(s)")
@@ -255,18 +290,18 @@ def status_report(
     now = time.time() if now is None else now
     plans = list(plans)
 
-    protocols = {plan.protocol.run_id: plan.protocol for plan in plans}
+    searches = {plan.search.run_id: (plan.label, plan.search) for plan in plans}
     search: list[dict] = []
     winners: dict[str, float] = {}
-    for run_id, protocol in protocols.items():
-        rows = search_rows(store, protocol, now)
+    for run_id, (label, protocol) in searches.items():
+        rows = search_rows(store, protocol, label, now)
         search.extend(rows)
         winner = next((r for r in rows if r["note"].startswith("winner")), None)
         if winner:
             winners[run_id] = winner["lr"]
 
     runs = [
-        run_row(store, plan, seed, winners.get(plan.protocol.run_id), now)
+        run_row(store, plan, seed, winners.get(plan.search.run_id), now)
         for plan in plans
         for seed in plan.protocol.seeds
     ]

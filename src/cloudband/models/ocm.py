@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from functools import partial
 
 import timm
@@ -14,7 +15,7 @@ from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS
 from cloudband.train.loop import checkpoint_name, fit_protocol
 from cloudband.train.loss import build_loss
-from cloudband.train.lr_search import search_learning_rate
+from cloudband.train.lr_search import SearchBusy, search_learning_rate
 from cloudband.train.manifest import build_training_manifest
 from cloudband.train.phase2 import (
     Phase2Run,
@@ -102,6 +103,20 @@ def train_ocm_ensemble(
     return results
 
 
+def ocm_search_protocol(protocol: TrainProtocol, backbone_name: str) -> TrainProtocol:
+    """The protocol a backbone's learning-rate search runs under.
+
+    Each network of the ensemble has its own search, over the same grid and with the
+    same budget as every other network (ADR-0023 D2), kept in its own files. The first
+    backbone's search was run before the searches were split by backbone, so it keeps
+    the names it was saved under; the others add the backbone to the run id. The
+    full runs keep the protocol's own run id whatever the backbone.
+    """
+    if backbone_name == PAPER_BACKBONES[0]:
+        return protocol
+    return replace(protocol, run_id=f"{protocol.run_id}-{backbone_name}")
+
+
 def run_ocm_ensemble_phase2(
     dls: DataLoaders,
     protocol: TrainProtocol,
@@ -110,37 +125,33 @@ def run_ocm_ensemble_phase2(
     pretrained: bool = True,
     search_seed: int | None = None,
 ) -> dict:
-    """Search the learning rate once, then train every backbone once per seed.
+    """Search each backbone's learning rate, then train every backbone once per seed.
 
-    The learning rate is searched once, at a single fixed seed (the first
-    of seeds by default), using the first backbone in PAPER_BACKBONES as
-    the representative for "OCM" as an architecture, per D2 of ADR-0023 —
-    the ADR partitions the learning-rate search by architecture (OCM vs.
-    Swin), not by backbone within OCM's own ensemble, and not by seed:
-    searching once keeps the seed repetitions isolated to initialization
-    variation, rather than mixing in a different winning rate for each one.
-    Every backbone then trains at the full budget with that one winning
-    rate, once per seed, each with its own checkpoint and its own manifest.
+    Every network of the ensemble gets its own search, at a single fixed seed (the
+    first of seeds by default), over the same grid and with the same budget as the
+    other backbones and as Swin, per D2 of ADR-0023: the search is per network, so
+    that a backbone is not trained at a rate that was only checked on another one.
+    It is run once per backbone and not once per seed, which keeps the seed
+    repetitions isolated to initialization variation, rather than mixing in a
+    different winning rate for each one. Each backbone then trains at the full budget
+    with its own winning rate, once per seed, each with its own checkpoint and manifest.
 
     Returns a dict keyed by backbone name, each value a dict keyed by seed.
     """
     if search_seed is None:
         search_seed = seeds[0]
 
-    representative = PAPER_BACKBONES[0]
-    lr_search = search_learning_rate(
-        dls,
-        protocol,
-        seed=search_seed,
-        model_builder=lambda: build_unet(
-            representative, img_size=img_size, pretrained=pretrained
-        ),
-    )
-    winner = lr_search.winner()
-    winning_protocol = full_protocol(protocol, winner.learning_rate)
-
     runs: dict = {}
     for backbone_name in PAPER_BACKBONES:
+        lr_search = search_learning_rate(
+            dls,
+            ocm_search_protocol(protocol, backbone_name),
+            seed=search_seed,
+            model_builder=lambda backbone_name=backbone_name: build_unet(
+                backbone_name, img_size=img_size, pretrained=pretrained
+            ),
+        )
+        winning_protocol = full_protocol(protocol, lr_search.winner().learning_rate)
         runs[backbone_name] = {}
         for seed in seeds:
             model = build_unet(backbone_name, img_size=img_size, pretrained=pretrained)
@@ -172,30 +183,50 @@ def run_ocm_ensemble_resumable(
 ) -> dict[str, str]:
     """Like run_ocm_ensemble_phase2, but saving each run and skipping saved ones.
 
-    The learning rate is searched once with the first backbone as the
-    representative and saved; then every seed trains both backbones, one seed
-    at a time, so an interruption leaves complete ensembles for the early
-    seeds. Returns each run's checkpoint name with "trained" or "skipped".
+    Each backbone's learning rate is searched on its own (see ocm_search_protocol)
+    and saved. A search that is not finished because another session is running
+    some of its candidates is left to it: the runs of that backbone wait, and the
+    others go on. Then every seed trains both backbones, one seed at a time, so an
+    interruption leaves complete ensembles for the early seeds. Returns each run's
+    checkpoint name with "trained", "skipped", "busy" (another session has it) or
+    "waiting for its learning-rate search".
     """
     if search_seed is None:
         search_seed = seeds[0]
 
-    representative = PAPER_BACKBONES[0]
-    lr_search, winning_protocol = load_or_search_learning_rate(
-        dls,
-        protocol,
-        lambda: build_unet(representative, img_size=img_size, pretrained=pretrained),
-        store,
-        search_seed,
-        accept_edge_winner,
-        break_locks,
-    )
-    progress(f"{protocol.run_id}: learning rate {winning_protocol.learning_rate}")
+    chosen: dict[str, tuple] = {}
+    for backbone_name in PAPER_BACKBONES:
+        try:
+            lr_search, _ = load_or_search_learning_rate(
+                dls,
+                ocm_search_protocol(protocol, backbone_name),
+                lambda backbone_name=backbone_name: build_unet(
+                    backbone_name, img_size=img_size, pretrained=pretrained
+                ),
+                store,
+                search_seed,
+                accept_edge_winner,
+                break_locks,
+            )
+        except SearchBusy as error:
+            progress(f"{backbone_name}: its runs wait for the learning-rate search ({error})")
+            continue
+        winning_protocol = full_protocol(protocol, lr_search.winner().learning_rate)
+        chosen[backbone_name] = (lr_search, winning_protocol)
+        progress(
+            f"{protocol.run_id} {backbone_name}: "
+            f"learning rate {winning_protocol.learning_rate}"
+        )
 
     status = {}
     for seed in seeds:
         for backbone_name in PAPER_BACKBONES:
-            name = checkpoint_name(winning_protocol, seed, backbone_name)
+            name = checkpoint_name(protocol, seed, backbone_name)
+            if backbone_name not in chosen:
+                status[name] = "waiting for its learning-rate search"
+                progress(f"{name}: {status[name]}")
+                continue
+            lr_search, winning_protocol = chosen[backbone_name]
             progress(f"{name}: starting")
             status[name] = train_if_missing(
                 dls,

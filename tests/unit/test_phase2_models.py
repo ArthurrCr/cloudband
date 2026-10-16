@@ -40,7 +40,7 @@ def build_test_dls():
     )
 
 
-def test_ocm_ensemble_phase2_searches_once_and_trains_both_backbones_per_seed(
+def test_ocm_ensemble_phase2_searches_each_backbone_once_and_trains_it_per_seed(
     monkeypatch,
 ):
     monkeypatch.setattr(ocm_module, "build_unet", lambda *a, **k: TinyModelStandIn())
@@ -62,11 +62,14 @@ def test_ocm_ensemble_phase2_searches_once_and_trains_both_backbones_per_seed(
     all_runs = [
         run for backbone_runs in runs.values() for run in backbone_runs.values()
     ]
-    winning_rates = {run.winning_protocol.learning_rate for run in all_runs}
-    assert len(winning_rates) == 1, (
-        "every backbone and seed must share the winning rate"
+    for backbone_runs in runs.values():
+        rates = {run.winning_protocol.learning_rate for run in backbone_runs.values()}
+        assert len(rates) == 1, "the seeds of a backbone must share its winning rate"
+        searches = {id(run.lr_search) for run in backbone_runs.values()}
+        assert len(searches) == 1, "a backbone's search must run once"
+    assert len({id(run.lr_search) for run in all_runs}) == len(PAPER_BACKBONES), (
+        "every backbone has a search of its own"
     )
-    assert len({id(run.lr_search) for run in all_runs}) == 1, "the search must run once"
 
     for run in all_runs:
         assert len(run.lr_search.runs) == len(LR_SEARCH_GRID)

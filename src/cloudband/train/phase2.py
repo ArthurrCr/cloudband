@@ -4,6 +4,8 @@ the full run once per seed."""
 from __future__ import annotations
 
 import gc
+import json
+import math
 from dataclasses import dataclass, replace
 
 import torch
@@ -182,6 +184,16 @@ def load_or_search_learning_rate(
     return lr_search, winning_protocol
 
 
+def _trained_learning_rate(store: RunStore, name: str) -> float | None:
+    """The learning rate a finished run was trained at, from its manifest."""
+    try:
+        config = json.loads(store.manifest_path(name).read_text()).get("config", {})
+    except (OSError, ValueError):
+        return None
+    rate = config.get("learning_rate")
+    return float(rate) if rate is not None else None
+
+
 def train_if_missing(
     dls: DataLoaders,
     winning_protocol: TrainProtocol,
@@ -201,6 +213,16 @@ def train_if_missing(
     """
     name = checkpoint_name(winning_protocol, seed, checkpoint_suffix)
     if store.is_done(name):
+        trained_at = _trained_learning_rate(store, name)
+        if trained_at is not None and not math.isclose(
+            trained_at, winning_protocol.learning_rate, rel_tol=1e-9
+        ):
+            raise RuntimeError(
+                f"{name}: it was trained at learning rate {trained_at:g} but its search "
+                f"chose {winning_protocol.learning_rate:g}. The runs of one model must "
+                "share the rate: discard it with store.discard and train it again "
+                "(the status cell lists such runs)."
+            )
         return "skipped"
     if not store.claim(name, break_locks=break_locks):
         return "busy"

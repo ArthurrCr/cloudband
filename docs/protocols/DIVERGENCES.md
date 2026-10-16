@@ -23,6 +23,7 @@ Status values: `open`, `resolved`.
 | D12 | The two PixBox collections use incompatible schemas | resolved |
 | D13 | OmniCloudMask model version 1.0 weights no longer load | open |
 | D14 | Published weights postdate the paper and were trained differently | resolved |
+| D15 | OCM trains both backbones at one learning rate; we search one per backbone | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -293,3 +294,22 @@ project uses 1.7.0 with the latest weights so that the three collections are com
 other. Phase 2 must train both models rather than compare against v4, as ADR-0023 requires:
 comparing a model trained on 16,980 patches against one trained on 100,528 measures data volume,
 not architecture.
+
+## D15. OCM trains both backbones at one learning rate; we search one per backbone
+
+Status: resolved by a decision, recorded in ADR-0023 D2.
+
+The OmniCloudMask training notebook builds one `Learner` per backbone and calls `fine_tune`
+with a single base learning rate, so `regnety_004` and `convnextv2_nano` share it. The rate
+is not tuned per backbone in the paper, and the value in our native configuration (0.005) has
+no source we could find, which is listed as open.
+
+Our protocol searches the rate of each network over the same grid with the same proxy budget
+(ADR-0023 D2), so the two OCM backbones may end up at different rates. This departs from the
+OCM recipe on purpose: a rate checked on one backbone and applied to the other would leave
+that backbone with less search than Swin received. The cost is 12 proxy runs for OCM against
+6 for Swin, the same six per network.
+
+Consequence. The reproduction is of the OCM architecture and data recipe, with the learning
+rate chosen by our own search. What this controlled comparison measures is therefore not
+OCM as published, a rule ADR-0023 already sets for its BOA values.

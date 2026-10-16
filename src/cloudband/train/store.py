@@ -111,6 +111,26 @@ class RunStore:
     def clear_epoch_state(self, name: str) -> None:
         self.epoch_state_path(name).unlink(missing_ok=True)
 
+    def discard(self, name: str) -> list[Path]:
+        """Delete everything a run left: manifest, checkpoint, progress and lock.
+
+        For a run that must be trained again, such as one made at a learning rate
+        other than the one its search chose. Returns the files that were removed.
+        """
+        candidates = [
+            self.manifest_path(name),
+            self.checkpoint_path(name),
+            self.checkpoint_path(name).with_suffix(".pth.partial"),
+            self.epoch_state_path(name),
+            self.epoch_state_path(name).with_suffix(".pt.partial"),
+            self.lock_path(name),
+        ]
+        removed = [path for path in candidates if path.is_file()]
+        for path in removed:
+            path.unlink()
+        self._held.pop(name, None)
+        return removed
+
     # ---- the learning-rate search, kept candidate by candidate ----
 
     def search_progress_path(self, protocol: TrainProtocol) -> Path:
