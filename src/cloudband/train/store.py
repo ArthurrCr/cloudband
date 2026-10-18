@@ -131,6 +131,76 @@ class RunStore:
         self._held.pop(name, None)
         return removed
 
+    def unused_files(
+        self, now: float | None = None, lease_seconds: float = 3600.0, min_age: float = 3600.0
+    ) -> list[tuple[Path, str]]:
+        """Files in the shared folder that nothing will read again, each with its reason.
+
+        Only leftovers that are certain: copies interrupted halfway (".partial"), probes
+        of the folder check, progress or locks of a run that is already done, locks that
+        nobody renews and that have no progress to continue, and a checkpoint or
+        manifest without its other half. A run with a live lock, or any file touched in
+        the last `min_age` seconds, is never listed, since a session may be writing it.
+        Progress that a session can still continue is never listed either. This only
+        lists; remove_unused deletes.
+        """
+        now = time.time() if now is None else now
+        found: list[tuple[Path, str]] = []
+        live: set[str] = set()
+        for lock in self.progress_dir.glob("*.lock"):
+            info = self.lock_info(lock.name[: -len(".lock")])
+            if info is not None and now - info["heartbeat"] < lease_seconds:
+                live.add(lock.name[: -len(".lock")])
+
+        def old(path: Path) -> bool:
+            return now - path.stat().st_mtime >= min_age
+
+        def add(path: Path, reason: str) -> None:
+            if path.is_file() and old(path) and path not in {p for p, _ in found}:
+                found.append((path, reason))
+
+        for folder in {self.results_dir, self.checkpoint_dir, self.progress_dir}:
+            for path in folder.glob("*.partial"):
+                add(path, "a copy that was interrupted halfway")
+            for path in folder.glob(".write-test-*"):
+                add(path, "a probe left by the folder check")
+
+        for lock in self.progress_dir.glob("*.lock"):
+            name = lock.name[: -len(".lock")]
+            if name in live:
+                continue
+            if self.is_done(name):
+                add(lock, "lock of a run that is already done")
+            elif not self.epoch_state_path(name).is_file():
+                add(lock, "stale lock of a run with no progress to continue")
+
+        for state in self.progress_dir.glob("*.state.pt"):
+            name = state.name[: -len(".state.pt")]
+            if name not in live and self.is_done(name):
+                add(state, "progress of a run that is already done")
+
+        for checkpoint in self.checkpoint_dir.glob("*.pth"):
+            name = checkpoint.stem
+            if name not in live and not self.manifest_path(name).is_file():
+                add(checkpoint, "a checkpoint with no manifest: the run was never marked done")
+
+        for manifest in self.results_dir.glob("*.json"):
+            name = manifest.stem
+            if name == "settings" or name.endswith(("-lr-search", "-lr-search.partial")):
+                continue
+            if name not in live and not self.checkpoint_path(name).is_file():
+                add(manifest, "a manifest with no checkpoint: the run cannot be used")
+        return sorted(found)
+
+    def remove_unused(self, items: list[tuple[Path, str]]) -> int:
+        """Delete the files unused_files listed. Returns how many were removed."""
+        removed = 0
+        for path, _ in items:
+            if path.is_file():
+                path.unlink()
+                removed += 1
+        return removed
+
     # ---- the learning-rate search, kept candidate by candidate ----
 
     def search_progress_path(self, protocol: TrainProtocol) -> Path:
