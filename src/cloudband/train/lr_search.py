@@ -108,6 +108,8 @@ def search_learning_rate(
             )
             if store:
                 store.save_search_run(protocol, run, budget, seed)
+                if result is not None and result.valid_losses:
+                    store.save_curve(protocol, learning_rate, result.valid_losses)
                 store.clear_epoch_state(name)
             runs.append(run)
             del learner, result

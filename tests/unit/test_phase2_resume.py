@@ -253,3 +253,13 @@ def test_the_busy_search_error_can_be_told_apart_from_other_failures(setup):
 
     with pytest.raises(SearchBusy):
         run_search(dls, store, Tiny)
+
+
+def test_every_finished_candidate_leaves_its_validation_curve(setup):
+    dls, store = setup
+
+    run_search(dls, store, Tiny)
+
+    curves = store.load_curves(protocol())
+    assert sorted(curves) == sorted(GRID)
+    assert all(len(curve) == 2 for curve in curves.values())    # 1 + 1 epochs in this test

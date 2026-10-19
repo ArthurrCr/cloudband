@@ -417,6 +417,30 @@ class RunStore:
             "still_improving": best >= len(history) - window,
         }
 
+    def curves_path(self, protocol: TrainProtocol) -> Path:
+        return self.results_dir / f"{protocol.run_id}-lr-curves.json"
+
+    def load_curves(self, protocol: TrainProtocol) -> dict[float, list[float]]:
+        """The validation loss after every epoch of each candidate that has it saved."""
+        path = self.curves_path(protocol)
+        if not path.is_file():
+            return {}
+        return {float(rate): list(curve) for rate, curve in json.loads(path.read_text()).items()}
+
+    def save_curve(self, protocol: TrainProtocol, learning_rate: float, curve) -> None:
+        """Keep the validation curve of one candidate, next to the search records.
+
+        The search record only has the best loss of a candidate; its curve is what shows
+        the proxy budget was enough, and it would otherwise live only in progress files
+        that are deleted once the candidate ends.
+        """
+        curves = self.load_curves(protocol)
+        curves[float(learning_rate)] = [float(value) for value in curve]
+        path = self.curves_path(protocol)
+        partial = path.with_suffix(".json.partial")
+        partial.write_text(json.dumps({f"{r:g}": c for r, c in sorted(curves.items())}, indent=2))
+        partial.replace(path)
+
     def search_path(self, protocol: TrainProtocol) -> Path:
         return self.results_dir / f"{protocol.run_id}-lr-search.json"
 

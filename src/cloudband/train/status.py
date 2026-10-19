@@ -219,6 +219,31 @@ def search_rows(
     return rows
 
 
+def finished_names(store: RunStore, plans: list[Plan], now: float | None = None) -> set[str]:
+    """Names of the runs and search candidates that are over.
+
+    Their progress files and locks are of no use any more: a finished run is its manifest
+    and checkpoint, and a finished candidate is its record in the search plus its
+    validation curve. A candidate whose curve is not saved yet is left out, so that the
+    progress file that still holds the curve is not thrown away.
+    """
+    names: set[str] = set()
+    for plan in plans:
+        for seed in plan.protocol.seeds:
+            name = checkpoint_name(plan.protocol, seed, plan.suffix)
+            if store.is_done(name):
+                names.add(name)
+        curves = store.load_curves(plan.search)
+        for row in search_rows(store, plan.search, plan.label, now):
+            diverged = row["best_val_loss"] == float("inf")
+            if row["state"] == "done" and (diverged or row["lr"] in curves):
+                candidate = proxy_protocol(plan.search, row["lr"])
+                names.add(
+                    checkpoint_name(candidate, plan.search.seeds[0], f"lrsearch-{row['lr']:g}")
+                )
+    return names
+
+
 def _summary(search: list[dict], runs: list[dict], plans: list[Plan]) -> str:
     lines = ["Learning-rate search"]
     for model in dict.fromkeys(row["model"] for row in search):
