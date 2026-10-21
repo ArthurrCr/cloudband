@@ -150,3 +150,56 @@ def test_salvage_refuses_a_curve_that_is_not_whole(tmp_path):
     assert saved == []
     assert "6 of 10 epochs" in missing[0]
     assert store.load_curves(plan.search) == {}
+
+
+def test_the_tidy_asks_for_nothing_when_it_is_off(tmp_path, monkeypatch):
+    def no_sign_in():
+        raise AssertionError("the sign-in must not be asked for")
+
+    monkeypatch.setattr(drive_tidy, "drive_service", no_sign_in)
+    lines = []
+
+    result = drive_tidy.run_tidy("off", make_store(tmp_path), [plan_for()], (), ("run",),
+                                 say=lines.append)
+
+    assert result is None
+    assert "no Google sign-in" in lines[0]
+
+
+def run_with_fakes(tmp_path, monkeypatch, mode):
+    trashed = []
+    mine = Copy("m", "x.lock", 85, "2026-10-10T00:00:00Z", True, SHARED)
+    newest = Copy("n", "x.lock", 85, "2026-10-12T00:00:00Z", True, SHARED)
+    monkeypatch.setattr(drive_tidy, "resolve_folder", lambda service, parts: "/".join(parts))
+    monkeypatch.setattr(drive_tidy, "list_copies", lambda service, folders, prefixes: [mine, newest])
+    monkeypatch.setattr(drive_tidy, "salvage_curves", lambda *a, **k: ([], []))
+    monkeypatch.setattr(drive_tidy, "trash", lambda service, copies: trashed.extend(copies) or len(copies))
+    lines = []
+    plan = drive_tidy.run_tidy(mode, make_store(tmp_path), [plan_for()],
+                               (tmp_path / "results",), ("x",), service=object(), say=lines.append)
+    return plan, trashed, lines
+
+
+def test_list_mode_shows_what_would_go_and_trashes_nothing(tmp_path, monkeypatch):
+    monkeypatch.setattr(drive_tidy, "folder_parts", lambda path: ("results",))
+
+    plan, trashed, lines = run_with_fakes(tmp_path, monkeypatch, "list")
+
+    assert [c.id for c in plan.trash] == ["m"]
+    assert trashed == []
+    assert any("nothing was trashed" in line for line in lines)
+
+
+def test_trash_mode_trashes_the_superseded_copies(tmp_path, monkeypatch):
+    monkeypatch.setattr(drive_tidy, "folder_parts", lambda path: ("results",))
+
+    _, trashed, _ = run_with_fakes(tmp_path, monkeypatch, "trash")
+
+    assert [c.id for c in trashed] == ["m"]
+
+
+def test_an_unknown_mode_is_refused(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError):
+        drive_tidy.run_tidy("yes", make_store(tmp_path), [], (), ())

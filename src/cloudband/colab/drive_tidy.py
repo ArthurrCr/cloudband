@@ -269,3 +269,68 @@ def salvage_curves(
             store.save_curve(protocol, rate, curve)
             saved.append(label)
     return saved, missing
+
+
+MODES = ("off", "list", "trash")
+
+
+def run_tidy(
+    mode: str, store, plans, directories, prefixes, service=None, say=print
+) -> TidyPlan | None:
+    """The whole tidy, for the notebook: curves, plan, report, and the trashing if asked.
+
+    mode "off" does nothing and asks for nothing, so a notebook run from top to bottom
+    never opens the second Google sign-in. "list" signs in, saves the missing curves and
+    shows what would be trashed. "trash" does the same and then trashes it.
+    """
+    from collections import Counter
+
+    from cloudband.train.status import finished_names
+
+    if mode not in MODES:
+        raise ValueError(f"mode must be one of {MODES}, not {mode!r}")
+    if mode == "off":
+        say('Drive tidy skipped (DRIVE_TIDY = "off"): no Google sign-in was asked for.')
+        return None
+
+    service = service or drive_service()
+    folders = {
+        resolve_folder(service, folder_parts(str(directory))): SHARED for directory in directories
+    }
+    folders[ROOT] = ROOT
+    copies = list_copies(service, folders, tuple(prefixes))
+
+    saved, missing = salvage_curves(service, store, plans, copies)
+    for label in saved:
+        say(f"curve saved: {label}")
+    for note in missing:
+        say(f"curve NOT recovered, progress file kept: {note}")
+
+    plan = plan_tidy(copies, finished=finished_names(store, plans))
+
+    def gb(items):
+        return sum(c.size for c in items) / 1e9
+
+    from_finished = [c for c in plan.trash if c in plan.of_finished]
+    say(f"\n{len(copies)} file(s) of the experiment, {gb(copies):.1f} GB; {len(plan.keep)} kept")
+    say(
+        f"to trash, owned by this account: {len(plan.trash)} file(s), {gb(plan.trash):.1f} GB "
+        f"({gb(from_finished):.1f} GB of them from finished runs)"
+    )
+    for name, count in Counter(c.name for c in plan.trash).most_common(8):
+        say(f"   {count:3d} x {name}")
+    if plan.others:
+        say(
+            f"superseded but owned by other accounts: {len(plan.others)} file(s), "
+            f"{gb(plan.others):.1f} GB: run this cell in those accounts"
+        )
+    if plan.last_in_root:
+        say(
+            f"only copy of its name, loose in the root of My Drive (kept): "
+            f"{len(plan.last_in_root)} file(s), {gb(plan.last_in_root):.1f} GB"
+        )
+    if plan.trash and mode == "trash":
+        say(f"trashed {trash(service, plan.trash)} file(s); empty the trash to free the space")
+    elif plan.trash:
+        say('\nnothing was trashed: set DRIVE_TIDY = "trash" and run again')
+    return plan
