@@ -111,3 +111,46 @@ def test_remove_unused_deletes_only_what_was_listed(tmp_path):
     assert removed == 1
     assert store.is_done("keep")
     assert not store.lock_path("gone").exists()
+
+
+def test_an_entry_the_drive_cannot_read_is_skipped_and_reported(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    lock(store, "gone", 5 * HOUR)
+    lock(store, "ghost", 5 * HOUR)
+    ghost = store.lock_path("ghost")
+    real_stat = type(ghost).stat
+
+    def stat(self, *args, **kwargs):
+        if self.name == "ghost.lock":
+            raise OSError(107, "Transport endpoint is not connected")
+        return real_stat(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(ghost), "stat", stat)
+    skipped = []
+
+    found = {p.name for p, _ in store.unused_files(skipped=skipped)}
+
+    assert found == {"gone.lock"}
+    assert [p.name for p in skipped] == ["ghost.lock"]
+
+
+def test_the_status_report_survives_an_entry_the_drive_cannot_read(tmp_path, monkeypatch):
+    from dataclasses import replace
+
+    from cloudband.train.protocol import ocm_shared_protocol
+    from cloudband.train.status import Plan, status_report
+
+    store = make_store(tmp_path)
+    protocol = replace(ocm_shared_protocol(1e-3), seeds=(0,))
+    real_is_file = type(store.results_dir).is_file
+
+    def is_file(self, *args, **kwargs):
+        if self.suffix == ".json" and "seed0" in self.name:
+            raise OSError(107, "Transport endpoint is not connected")
+        return real_is_file(self, *args, **kwargs)
+
+    monkeypatch.setattr(type(store.results_dir), "is_file", is_file)
+
+    report = status_report(store, [Plan("OCM", protocol, "regnety_004")])
+
+    assert report.runs[0]["state"] == "not started"

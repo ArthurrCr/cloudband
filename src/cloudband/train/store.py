@@ -25,6 +25,20 @@ import torch
 from cloudband.train.protocol import LrSearchManifest, LrSearchRun, TrainProtocol
 
 
+def _is_file(path: Path) -> bool:
+    """is_file() that reads a Drive entry which cannot be read as absent.
+
+    Right after files are trashed from outside the mount, the listing can still show
+    them for a while, and asking about one fails with "Transport endpoint is not
+    connected". For listing and reporting that means "not there"; the paths that train
+    keep the strict is_file(), so a mount that really dropped stops the run.
+    """
+    try:
+        return path.is_file()
+    except OSError:
+        return False
+
+
 @dataclass(frozen=True)
 class RunStore:
     """Where finished runs live, and where fastai writes them while training."""
@@ -132,7 +146,11 @@ class RunStore:
         return removed
 
     def unused_files(
-        self, now: float | None = None, lease_seconds: float = 3600.0, min_age: float = 3600.0
+        self,
+        now: float | None = None,
+        lease_seconds: float = 3600.0,
+        min_age: float = 3600.0,
+        skipped: list[Path] | None = None,
     ) -> list[tuple[Path, str]]:
         """Files in the shared folder that nothing will read again, each with its reason.
 
@@ -142,7 +160,8 @@ class RunStore:
         manifest without its other half. A run with a live lock, or any file touched in
         the last `min_age` seconds, is never listed, since a session may be writing it.
         Progress that a session can still continue is never listed either. This only
-        lists; remove_unused deletes.
+        lists; remove_unused deletes. Entries of the Drive that cannot be read (see _is_file)
+        are left out, and added to `skipped` when it is given.
         """
         now = time.time() if now is None else now
         found: list[tuple[Path, str]] = []
@@ -152,12 +171,20 @@ class RunStore:
             if info is not None and now - info["heartbeat"] < lease_seconds:
                 live.add(lock.name[: -len(".lock")])
 
-        def old(path: Path) -> bool:
-            return now - path.stat().st_mtime >= min_age
-
         def add(path: Path, reason: str) -> None:
-            if path.is_file() and old(path) and path not in {p for p, _ in found}:
+            try:
+                if not path.is_file():
+                    return
+                recent = now - path.stat().st_mtime < min_age
+            except OSError:
+                if skipped is not None:
+                    skipped.append(path)
+                return
+            if not recent and path not in {p for p, _ in found}:
                 found.append((path, reason))
+
+        def done(name: str) -> bool:
+            return _is_file(self.manifest_path(name)) and _is_file(self.checkpoint_path(name))
 
         for folder in {self.results_dir, self.checkpoint_dir, self.progress_dir}:
             for path in folder.glob("*.partial"):
@@ -169,26 +196,26 @@ class RunStore:
             name = lock.name[: -len(".lock")]
             if name in live:
                 continue
-            if self.is_done(name):
+            if done(name):
                 add(lock, "lock of a run that is already done")
-            elif not self.epoch_state_path(name).is_file():
+            elif not _is_file(self.epoch_state_path(name)):
                 add(lock, "stale lock of a run with no progress to continue")
 
         for state in self.progress_dir.glob("*.state.pt"):
             name = state.name[: -len(".state.pt")]
-            if name not in live and self.is_done(name):
+            if name not in live and done(name):
                 add(state, "progress of a run that is already done")
 
         for checkpoint in self.checkpoint_dir.glob("*.pth"):
             name = checkpoint.stem
-            if name not in live and not self.manifest_path(name).is_file():
+            if name not in live and not _is_file(self.manifest_path(name)):
                 add(checkpoint, "a checkpoint with no manifest: the run was never marked done")
 
         for manifest in self.results_dir.glob("*.json"):
             name = manifest.stem
             if name == "settings" or name.endswith(("-lr-search", "-lr-search.partial")):
                 continue
-            if name not in live and not self.checkpoint_path(name).is_file():
+            if name not in live and not _is_file(self.checkpoint_path(name)):
                 add(manifest, "a manifest with no checkpoint: the run cannot be used")
         return sorted(found)
 
@@ -196,7 +223,7 @@ class RunStore:
         """Delete the files unused_files listed. Returns how many were removed."""
         removed = 0
         for path, _ in items:
-            if path.is_file():
+            if _is_file(path):
                 path.unlink()
                 removed += 1
         return removed
@@ -258,7 +285,7 @@ class RunStore:
 
     def lock_info(self, name: str) -> dict | None:
         path = self.lock_path(name)
-        if not path.is_file():
+        if not _is_file(path):
             return None
         try:
             return json.loads(path.read_text())

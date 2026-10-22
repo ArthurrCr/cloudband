@@ -66,8 +66,11 @@ def _ago(seconds: float) -> str:
 
 def _progress(path: Path) -> dict | None:
     """Epochs finished, best loss so far and learning rate of a run in flight."""
-    if not path.is_file():
-        return None
+    try:
+        if not path.is_file():
+            return None
+    except OSError:
+        return None          # an entry the Drive still lists after it was trashed
     try:
         try:
             # the file holds whole models; mapping it avoids reading the weights
@@ -122,6 +125,14 @@ def _in_flight(store: RunStore, name: str, total: int, now: float) -> dict:
     }
 
 
+def _is_done(store: RunStore, name: str) -> bool:
+    """store.is_done for a report: an entry the Drive cannot read counts as not done."""
+    try:
+        return store.is_done(name)
+    except OSError:
+        return False
+
+
 def run_row(
     store: RunStore,
     plan: Plan,
@@ -133,7 +144,7 @@ def run_row(
     name = checkpoint_name(plan.protocol, seed, plan.suffix)
     total = plan.protocol.frozen_epochs + plan.protocol.unfrozen_epochs
     row = {"model": plan.label, "seed": seed}
-    if store.is_done(name):
+    if _is_done(store, name):
         manifest = json.loads(store.manifest_path(name).read_text())
         config = manifest.get("config", {})
         history = config.get("valid_loss_history") or []
@@ -231,7 +242,7 @@ def finished_names(store: RunStore, plans: list[Plan], now: float | None = None)
     for plan in plans:
         for seed in plan.protocol.seeds:
             name = checkpoint_name(plan.protocol, seed, plan.suffix)
-            if store.is_done(name):
+            if _is_done(store, name):
                 names.add(name)
         curves = store.load_curves(plan.search)
         for row in search_rows(store, plan.search, plan.label, now):
