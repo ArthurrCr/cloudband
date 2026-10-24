@@ -213,7 +213,9 @@ class RunStore:
 
         for manifest in self.results_dir.glob("*.json"):
             name = manifest.stem
-            if name == "settings" or name.endswith(("-lr-search", "-lr-search.partial")):
+            if name == "settings" or name.endswith(
+                ("-lr-search", "-lr-search.partial", "-lr-curves")
+            ):
                 continue
             if name not in live and not _is_file(self.checkpoint_path(name)):
                 add(manifest, "a manifest with no checkpoint: the run cannot be used")

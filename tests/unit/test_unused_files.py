@@ -101,6 +101,16 @@ def test_halves_and_partials_are_listed_but_search_records_and_settings_are_not(
     }
 
 
+def test_saved_validation_curves_are_never_listed(tmp_path):
+    store = make_store(tmp_path)
+    for name in ("ocm-x-lr-curves.json", "ocm-x-convnextv2_nano.fcmae_ft_in1k-lr-curves.json"):
+        path = store.results_dir / name
+        path.write_text("{}")
+        age(path, 5 * HOUR)
+
+    assert listed(store) == {}
+
+
 def test_remove_unused_deletes_only_what_was_listed(tmp_path):
     store = make_store(tmp_path)
     finish(store, "keep")
