@@ -152,6 +152,67 @@ def test_salvage_refuses_a_curve_that_is_not_whole(tmp_path):
     assert store.load_curves(plan.search) == {}
 
 
+def test_salvage_saves_a_short_curve_as_partial_only_when_accepted(tmp_path):
+    store = make_store(tmp_path)
+    plan = plan_for()
+    record(store, plan, LR_SEARCH_GRID[0])
+    state = f"{candidate_name(plan, LR_SEARCH_GRID[0])}.state.pt"
+    copies = [copy("only", state)]
+
+    saved, _ = drive_tidy.salvage_curves(
+        None, store, [plan], copies, read=lambda service, file_id: [1.0] * 9, accept_partial=True
+    )
+
+    assert store.load_curves(plan.search)[LR_SEARCH_GRID[0]] == [1.0] * 9
+    assert saved == [f"{plan.label} lr {LR_SEARCH_GRID[0]:g} (partial: 9 of 10 epochs)"]
+
+
+def test_a_longer_curve_replaces_a_partial_one_and_a_shorter_one_does_not(tmp_path):
+    store = make_store(tmp_path)
+    plan = plan_for()
+    record(store, plan, LR_SEARCH_GRID[0])
+    store.save_curve(plan.search, LR_SEARCH_GRID[0], [1.0] * 8)
+    state = f"{candidate_name(plan, LR_SEARCH_GRID[0])}.state.pt"
+    copies = [copy("only", state)]
+
+    drive_tidy.salvage_curves(
+        None, store, [plan], copies, read=lambda service, file_id: [2.0] * 6, accept_partial=True
+    )
+    assert store.load_curves(plan.search)[LR_SEARCH_GRID[0]] == [1.0] * 8
+
+    drive_tidy.salvage_curves(
+        None, store, [plan], copies, read=lambda service, file_id: [3.0] * 10
+    )
+    assert store.load_curves(plan.search)[LR_SEARCH_GRID[0]] == [3.0] * 10
+
+
+def test_a_partial_curve_frees_the_progress_files_only_when_accepted(tmp_path):
+    store = make_store(tmp_path)
+    plan = plan_for()
+    record(store, plan, LR_SEARCH_GRID[0])
+    store.save_curve(plan.search, LR_SEARCH_GRID[0], [1.0] * 9)
+    name = candidate_name(plan, LR_SEARCH_GRID[0])
+
+    assert name not in finished_names(store, [plan])
+    assert name in finished_names(store, [plan], accept_partial=True)
+
+
+def test_the_status_marks_a_partial_curve(tmp_path):
+    from cloudband.train.status import search_rows
+
+    store = make_store(tmp_path)
+    plan = plan_for()
+    record(store, plan, LR_SEARCH_GRID[0])
+    record(store, plan, LR_SEARCH_GRID[1])
+    store.save_curve(plan.search, LR_SEARCH_GRID[0], [1.0] * 9)
+    store.save_curve(plan.search, LR_SEARCH_GRID[1], [1.0] * 10)
+
+    rows = {r["lr"]: r["note"] for r in search_rows(store, plan.search, plan.label)}
+
+    assert rows[LR_SEARCH_GRID[0]] == "curve partial: 9 of 10 epochs"
+    assert rows[LR_SEARCH_GRID[1]] == ""
+
+
 def test_the_tidy_asks_for_nothing_when_it_is_off(tmp_path, monkeypatch):
     def no_sign_in():
         raise AssertionError("the sign-in must not be asked for")

@@ -221,7 +221,12 @@ def _read_valid_losses(service, file_id: str) -> list[float]:
 
 
 def salvage_curves(
-    service, store, plans, copies: list[Copy], read=_read_valid_losses
+    service,
+    store,
+    plans,
+    copies: list[Copy],
+    read=_read_valid_losses,
+    accept_partial: bool = False,
 ) -> tuple[list[str], list[str]]:
     """Save the validation curve of every finished candidate that has none saved.
 
@@ -229,7 +234,9 @@ def salvage_curves(
     the progress file that is cleared when the candidate ends, leaving only the stale
     copies on Drive. The newest complete copy holds the whole curve; it is kept only
     when it has every epoch of the proxy budget, so a partial curve is never saved as
-    if it were whole. Returns what was saved and what could not be.
+    if it were whole. With `accept_partial` a curve that stops short is saved too, when
+    it has at least one epoch, and the status table marks it as partial; it is replaced
+    by a longer one if a later run finds it. Returns what was saved and what could not be.
     """
     from cloudband.train.loop import checkpoint_name
     from cloudband.train.lr_search import proxy_protocol
@@ -247,7 +254,11 @@ def salvage_curves(
         have = store.load_curves(protocol)
         for row in search_rows(store, protocol, plan.label):
             rate = row["lr"]
-            if row["state"] != "done" or rate in have or row["best_val_loss"] == float("inf"):
+            if (
+                row["state"] != "done"
+                or len(have.get(rate, ())) >= epochs
+                or row["best_val_loss"] == float("inf")
+            ):
                 continue
             name = checkpoint_name(
                 proxy_protocol(protocol, rate), protocol.seeds[0], f"lrsearch-{rate:g}"
@@ -263,11 +274,15 @@ def salvage_curves(
                 key=lambda c: c.modified,
             )
             curve = read(service, newest.id)
-            if len(curve) != epochs:
+            whole = len(curve) == epochs
+            if len(curve) > epochs or len(curve) <= len(have.get(rate, ())):
+                missing.append(f"{label}: the newest copy has {len(curve)} of {epochs} epochs")
+                continue
+            if not whole and not accept_partial:
                 missing.append(f"{label}: the newest copy has {len(curve)} of {epochs} epochs")
                 continue
             store.save_curve(protocol, rate, curve)
-            saved.append(label)
+            saved.append(label if whole else f"{label} (partial: {len(curve)} of {epochs} epochs)")
     return saved, missing
 
 
@@ -275,13 +290,24 @@ MODES = ("off", "list", "trash")
 
 
 def run_tidy(
-    mode: str, store, plans, directories, prefixes, service=None, say=print
+    mode: str,
+    store,
+    plans,
+    directories,
+    prefixes,
+    service=None,
+    say=print,
+    accept_partial: bool = False,
 ) -> TidyPlan | None:
     """The whole tidy, for the notebook: curves, plan, report, and the trashing if asked.
 
     mode "off" does nothing and asks for nothing, so a notebook run from top to bottom
     never opens the second Google sign-in. "list" signs in, saves the missing curves and
     shows what would be trashed. "trash" does the same and then trashes it.
+
+    A candidate whose newest progress file stops short of the proxy budget keeps that
+    file, and the copies of it, until `accept_partial` is True: then the shorter curve
+    is saved, marked as partial, and the copies of that candidate go like the others.
     """
     from collections import Counter
 
@@ -300,13 +326,15 @@ def run_tidy(
     folders[ROOT] = ROOT
     copies = list_copies(service, folders, tuple(prefixes))
 
-    saved, missing = salvage_curves(service, store, plans, copies)
+    saved, missing = salvage_curves(
+        service, store, plans, copies, accept_partial=accept_partial
+    )
     for label in saved:
         say(f"curve saved: {label}")
     for note in missing:
         say(f"curve NOT recovered, progress file kept: {note}")
 
-    plan = plan_tidy(copies, finished=finished_names(store, plans))
+    plan = plan_tidy(copies, finished=finished_names(store, plans, accept_partial=accept_partial))
 
     def gb(items):
         return sum(c.size for c in items) / 1e9

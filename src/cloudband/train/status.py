@@ -209,6 +209,7 @@ def search_rows(
         found.update({run.learning_rate: run.val_loss for run in final.runs})
     winner = min(found, key=found.get) if final is not None and found else None
 
+    curves = store.load_curves(protocol)
     rows = []
     for learning_rate in sorted(set(grid) | set(found)):
         row = {"model": label, "lr": learning_rate}
@@ -216,6 +217,9 @@ def search_rows(
             note = "diverged (infinite loss)" if found[learning_rate] == float("inf") else ""
             if learning_rate == winner:
                 note = "winner" + (" (edge of the grid)" if final.winner_at_edge() else "")
+            kept = len(curves.get(learning_rate, ()))
+            if 0 < kept < total:
+                note += ("; " if note else "") + f"curve partial: {kept} of {total} epochs"
             row.update(
                 state="done", epochs=f"{total}/{total}", epochs_done=total,
                 best_val_loss=found[learning_rate], session="", note=note,
@@ -230,14 +234,19 @@ def search_rows(
     return rows
 
 
-def finished_names(store: RunStore, plans: list[Plan], now: float | None = None) -> set[str]:
+def finished_names(
+    store: RunStore, plans: list[Plan], now: float | None = None, accept_partial: bool = False
+) -> set[str]:
     """Names of the runs and search candidates that are over.
 
     Their progress files and locks are of no use any more: a finished run is its manifest
     and checkpoint, and a finished candidate is its record in the search plus its
     validation curve. A candidate whose curve is not saved yet is left out, so that the
-    progress file that still holds the curve is not thrown away.
+    progress file that still holds the curve is not thrown away. A curve that is saved
+    but has fewer epochs than the proxy budget does not count either, unless
+    `accept_partial` says the person settled for it: another copy may hold more of it.
     """
+    proxy_epochs = PROXY_FROZEN_EPOCHS + PROXY_UNFROZEN_EPOCHS
     names: set[str] = set()
     for plan in plans:
         for seed in plan.protocol.seeds:
@@ -247,7 +256,9 @@ def finished_names(store: RunStore, plans: list[Plan], now: float | None = None)
         curves = store.load_curves(plan.search)
         for row in search_rows(store, plan.search, plan.label, now):
             diverged = row["best_val_loss"] == float("inf")
-            if row["state"] == "done" and (diverged or row["lr"] in curves):
+            curve = curves.get(row["lr"])
+            kept = curve is not None and (accept_partial or len(curve) >= proxy_epochs)
+            if row["state"] == "done" and (diverged or kept):
                 candidate = proxy_protocol(plan.search, row["lr"])
                 names.add(
                     checkpoint_name(candidate, plan.search.seeds[0], f"lrsearch-{row['lr']:g}")
