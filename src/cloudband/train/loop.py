@@ -167,6 +167,11 @@ def _check_resume(state: dict, fingerprint: dict) -> None:
             f"{fingerprint['name']}: saved progress was made with other settings "
             f"({', '.join(differing)}); delete it to start the run again, or "
             "restore the settings it was made with"
+            + (
+                " (in the notebook, run the discard cell with CONFIRM_DISCARD = True)"
+                if "learning_rate" in differing
+                else ""
+            )
         )
 
 
