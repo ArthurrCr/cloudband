@@ -4,6 +4,19 @@
 
 Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2 páginas, fonte 12) para caber no limite do edital. É o seu guia de implementação caso seja aprovado(a) — cada decisão aqui tem o "porquê" registrado, não só o "o quê".
 
+> **Revisão de 29/10/2026 — leia antes de usar este documento.**
+> Estas notas foram escritas antes da implementação. Elas continuam sendo o plano geral (fases 1 a 4) e o
+> único plano para as Fases 3 e 4, mas a Fase 2 foi detalhada e em parte alterada depois, no código e nos
+> documentos do repositório. Em caso de conflito, vale esta ordem:
+>
+> 1. `docs/adr/ADR-0023.md` — protocolo da comparação OCM × Swin+UPerNet (Fase 2).
+> 2. `docs/protocols/*.md` — o que cada artigo realmente diz, verificado na fonte, e `DIVERGENCES.md`.
+> 3. Este documento.
+>
+> As seções corrigidas trazem um bloco **"Revisão 29/10/2026"**; o texto original foi mantido acima de cada
+> bloco para registrar o raciocínio. O estado da execução e as pendências estão na seção 6, no fim.
+> O texto como foi escrito originalmente está no histórico do git (primeiro commit deste arquivo).
+
 ---
 
 ## 1. Visão geral
@@ -27,12 +40,41 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 - **Dataset de treino do artigo original: CloudSEN12 sozinho** (L1C + L2A das mesmas 8.490 patches = 16.980 patches), mais augmentations sintéticos específicos de domínio (image tear, random rectangle, scene edge) para simular artefatos. **"Hard negatives" e "scribble" como datasets adicionais só entraram em versões posteriores do pacote open-source** — não fazem parte da metodologia do paper de 2025. Confirmado na fonte: o dataset combinado publicado (CloudSEN12 + KappaSet + OCM hard negative + OCM scribble, ~103.548 pares imagem-rótulo) é o que treinou os **pesos v4**, não os do artigo. Ou seja: reproduzir a metodologia do paper é inteiramente viável com o CloudSEN12+ que você já vai usar; não precisa de dados privados. **Implicação para a comparação de fidelidade (seção 2.9):** ao comparar seu R-G-NIR retreinado contra o BOA publicado, confirme contra qual versão dos pesos/dataset o número de referência foi reportado — comparar contra o BOA dos pesos v4 (treinados em ~6× mais dados) penalizaria injustamente sua reprodução, que usa só o CloudSEN12+.
 - **Normalização: Z-score dinâmico + treino multirresolução** — pilares que permitem ao modelo generalizar entre sensores sem treino específico por sensor.
 
+> **Revisão 29/10/2026.**
+> - **Versões dos pesos, confirmadas no changelog do modelo:** V1 (o paper) usa regnety_004 + convnextv2_nano
+>   treinados só no CloudSEN12 High. A troca para edgenext_small aconteceu na **V2, ainda sem dados novos**, e os
+>   dados extras (KappaSet, hard negatives etc.) entram a partir da V3. A Fase 2 usa os backbones do paper,
+>   não os do pacote atual (ADR-0023 D6). Detalhes em `docs/protocols/ocm_protocol.md`.
+> - **Os pesos V1, que produziram os números do paper, não carregam mais** num PyTorch atual (DIVERGENCES D13).
+>   Todo o projeto usa `omnicloudmask==1.7.0` com os pesos mais recentes, comparáveis entre si mas não com o paper.
+> - **Hiperparâmetros de treino do OCM: há uma inconsistência a resolver na documentação.**
+>   O `ocm_protocol.md` registra 50+50 épocas e LR inicial 0,005. O código (`train/protocol.py`) segue o notebook
+>   de treino público do OCM: 15+15 épocas e `base_lr = 1e-3`. A DIVERGENCES D15 diz que o 0,005 não tem fonte
+>   encontrada. O repositório usa 15+15; a fonte de cada número precisa ser conferida e os docs alinhados.
+> - **O "frozen" do `fine_tune` não congela nada aqui**, nem no notebook do OCM: o `Learner` é criado sem
+>   splitter, então há um único grupo de parâmetros. Na prática são duas fases one-cycle sobre a rede inteira,
+>   com LR `base_lr` na primeira e `base_lr/2` na segunda (`train/progress.py`).
+
 ### 2.2 Swin+UPerNet / STUPmask (Pang et al., 2026)
 
 - Nome oficial dos autores: **STUPmask**. Na proposta usei "Swin+UPerNet" deliberadamente nas seções de metodologia, porque "STUPmask" é o modelo treinado com a configuração nativa deles — usar esse nome para a sua versão restrita a R-G-NIR seria impreciso, do mesmo jeito que "a arquitetura do OmniCloudMask" era impreciso para o ensemble.
 - **Configuração nativa para Sentinel-2: 7 bandas, do azul ao SWIR** — especificamente B02, B03, B04, B08, B10 (Cirrus), B11, B12. Exclui as red-edge (B5, B6, B7, B8A) e vapor d'água (B9). Fonte: Seção 3.2 do artigo ("Model training and construction").
 - **Por que restringir a R-G-NIR mesmo sabendo que o nativo é melhor:** treinar com 7 bandas introduziria DOIS confundidores na comparação CNN-vs-transformer (arquitetura E quantidade de banda), além de o OCM não aceitar 7 canais sem alterar a primeira camada (o que descaracterizaria "a arquitetura do OCM"). O Swin-R-G-NIR vai ter desempenho inferior ao STUPmask nativo — isso é esperado e correto, é o preço do experimento controlado. **Nunca reportar esse número como "o desempenho do STUPmask".**
 - Citação completa: Remote Sensing of Environment, 2026, v. 334, artigo 115206. DOI: 10.1016/j.rse.2025.115206.
+
+> **Revisão 29/10/2026.**
+> - **A lista de 7 bandas não está literalmente na Seção 3.2.** O artigo só diz que as bandas vão do azul ao
+>   SWIR, sem o termal. B02, B03, B04, B08, B10, B11, B12 é uma **inferência por analogia** com a lista do
+>   Landsat 8, que a mesma seção enumera. A inferência é razoável, a atribuição como citação literal não é
+>   (DIVERGENCES D4). Qual NIR também não está escrito; a Tabela 1 do artigo classifica B08 como NIR e B8A como
+>   red edge, o que favorece B08 — registrar como decisão do projeto.
+> - **O STUPmask é binário** (nuvem / não nuvem): não tem classe sombra em nenhum lugar do artigo. Na
+>   configuração nativa ele só participa do experimento de nuvem (`docs/protocols/stupmask_protocol.md`).
+> - **Código e pesos não são públicos.** O modelo precisa ser retreinado, com cerca de 70% dos hiperparâmetros
+>   escolhidos pelo projeto (LR, batch, épocas, inicialização e augmentations não constam do artigo).
+> - **Contradição interna sobre o treino em Sentinel-2:** a Seção 2.2 diz que o CloudSEN12 é treino; a 3.2 diz
+>   que o modelo foi treinado em L8 Biome + CMC. Isso decide se o BOA de 93,64% no teste do CloudSEN12 vem de um
+>   modelo que viu o CloudSEN12 (DIVERGENCES D1, em aberto até os autores responderem).
 
 ### 2.3 DOFA (Xiong et al., 2024) — por que ele, e como usar
 
@@ -129,6 +171,21 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 - Fonte do protocolo: Skakun, S. et al. "Cloud Mask Intercomparison eXercise (CMIX): An evaluation of cloud masking algorithms for Landsat 8 and Sentinel-2." Remote Sensing of Environment, 274, 112990, 2022. Distinto do Paperin et al. (2021), que é sobre a coleção de pixels PixBox especificamente, usada *dentro* do framework CMIX como um dos datasets de referência.
 - Detalhe do OCM: agrupa nuvem espessa + fina numa única classe "nuvem" para fins de comparação no experimento cloud/no-cloud — manter essa convenção ao calcular o BOA comparável.
 
+> **Revisão 29/10/2026.**
+> - **Os três experimentos implementados são clear, cloud e shadow**, cada um binário um-contra-o-resto, como no
+>   OCM — não "nuvem, sombra, válido/inválido". O CMIX em si roda **um** experimento só (nuvem × não nuvem) e
+>   exclui sombra explicitamente. O que o projeto chama de "protocolo CMIX" são as fórmulas de OA/BOA/PA/UA do
+>   CMIX aplicadas aos três experimentos; dizer isso na metodologia (`docs/protocols/cmix_protocol.md`).
+>   F1 e IoU não fazem parte do CMIX; são acréscimo do projeto.
+> - **Não existe BOA publicado do OCM no teste do CloudSEN12+**: o CloudSEN12 é o conjunto de treino do OCM, e o
+>   paper só reporta PixBox Sentinel-2, PixBox Landsat 8 e PlanetScope. A checagem de fidelidade foi feita no
+>   **PixBox Sentinel-2** contra o notebook de referência do pacote 1.7.0: diferença de −0,07, +0,08 e +0,70 pp
+>   em clear, cloud e shadow, dentro da faixa explicada pela cena ausente do arquivo Zenodo (DIVERGENCES D11).
+>   O número no CloudSEN12+ (94,32 / 93,91 / 88,02) é desempenho in-domain, sem alvo publicado.
+> - Comparar com os valores do paper exige os pesos V1, que não carregam mais (D13). Por isso o ADR-0023 D3
+>   prevê a variante `ocm-rgn-cs12-native` (9–50 m, LR do paper), treinada pelo projeto, como checagem de
+>   fidelidade do *treino*. Ela ainda não foi treinada.
+
 ### 2.10 Teste estatístico para comparar BOA — qual variante de Wilcoxon (decisão fechada: signed-rank pareado por cena)
 
 - **Decisão fechada na proposta: Wilcoxon signed-rank pareado por cena de teste.** Isso corrige uma conclusão anterior destas notas, que assumia comparação por seed e apontava rank-sum/Mann-Whitney — a mudança vem de decidir *qual é a unidade amostral*, não de mudar de ideia sobre estatística.
@@ -142,6 +199,24 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 - Em Python: `scipy.stats.wilcoxon` (versão pareada/signed-rank) — **não** `scipy.stats.mannwhitneyu`/`ranksums`, dado que a comparação é pareada por cena. Atenção a empates de BOA idênticos entre cenas (o scipy usa aproximação normal e emite warning; para amostras menores, considerar o método exato via `pratt`/`zsplit` ou o pacote `coin` em R).
 - Mesma lógica (signed-rank pareado por cena) se aplica à extensão condicional com o Swin+UPerNet.
 
+> **Revisão 29/10/2026.**
+> - **O que está implementado** (`train/comparison.py`): o BOA de cada patch de teste é calculado para cada seed,
+>   tirada a média entre as seeds por patch, e só então roda o signed-rank pareado. É a opção "agregar entre
+>   seeds" desta seção, mas agregando o BOA, não as predições.
+> - **O número de pares não é 975.** O BOA fica indefinido num patch onde a classe (ou o seu negativo) não
+>   aparece, porque a especificidade ou a sensibilidade fica sem denominador. Pares válidos: cerca de 705
+>   (clear), 767 (cloud) e 655 (shadow) (`docs/protocols/ocm_protocol.md`).
+> - **EM ABERTO — unidade de pareamento.** "Cena" no código é o patch. Os 975 patches de teste vêm de **195 ROIs,
+>   5 patches por ROI** (mesmo local, datas diferentes), e cada ROI cai inteiro num único split. Patches do mesmo
+>   ROI não são independentes, então o teste sobre 975 patches superestima a significância (pseudo-replicação).
+>   Proposta, mantendo a decisão de signed-rank pareado: agregar por ROI (somar as matrizes de confusão dos 5
+>   patches) e testar sobre os ~195 ROIs, ou usar bootstrap por ROI. O `roi_id` já é guardado no cache local.
+> - **EM ABERTO — complementos ao p-valor.** Com centenas de pares, diferenças minúsculas dão p pequeno.
+>   Reportar também: tamanho de efeito com intervalo de confiança (bootstrap hierárquico sobre ROIs e seeds),
+>   BOA agregado por seed (média ± desvio por arquitetura) e correção de Holm para os três experimentos.
+> - **Teste L2A como resultado secundário** (ADR-0023 D5): as mesmas 975 cenas em L2A, reportadas à parte, nunca
+>   somadas ao resultado principal nem tratadas como evidência independente.
+
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 
 - **Reamostragem ao GSD de 10m é obrigatória e não é trivial.** O CloudSEN12+ entrega as 13 bandas, mas elas têm resoluções nativas diferentes: B2/B3/B4/B8 a 10m; B5/B6/B7/B8A/B11/B12 a 20m; B1/B9/B10 a 60m. Para alimentar tanto o DOFA (que espera um stack coerente) quanto qualquer combinação das 286, todas precisam estar no mesmo grid de 10m. **Decisão: reamostrar por vizinho mais próximo, não bilinear/cúbico.** O motivo é específico do projeto: interpolação suave inventa valores intermediários de reflectância que não existiam, o que distorceria tanto a separabilidade medida pelo classificador linear (que depende dos valores reais de reflectância da classe) quanto a pureza do bloco 16×16. Vizinho mais próximo preserva os valores medidos, ao custo de "blocos" visíveis nas bandas de 60m — aceitável, porque a unidade de análise é o token de 16×16, não o pixel individual.
@@ -149,12 +224,72 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 - **Padding: as imagens vêm de 509×509 preenchidas para 512×512 com zeros nas bordas inferior e esquerda.** Isso interage diretamente com o recorte de 224×224 da Fase 3 (seção 2.3): um recorte que caia sobre a faixa de padding alimentaria o DOFA com zeros, que viram tokens espúrios. **Regra: derivar a janela de recorte da região válida 509×509, nunca do canvas 512×512 cheio.**
 - **Dois níveis de normalização, não confundir.** (1) Para o **treino das arquiteturas** (Fase 2), seguir o Z-score dinâmico do OCM — é parte da metodologia que se quer reproduzir. (2) Para a **extração de embeddings do DOFA** (Fase 3), a normalização é a esperada pelo DOFA (reflectância / 10000, clip [0,1]), porque o checkpoint pré-treinado foi calibrado nessa escala — aplicar Z-score dinâmico aqui colocaria a entrada fora da distribuição de pré-treino. São pipelines de normalização distintos para etapas distintas; documentar separadamente.
 
+> **Revisão 29/10/2026.**
+> - **Feito na Fase 2:** recorte da janela válida 509×509 (linhas 0–508, colunas 3–511 do canvas de 512) em
+>   `datasets/cloudsen12.py`; Z-score dinâmico por patch e por canal, ignorando no-data, em `train/normalize.py`;
+>   índices R-G-NIR fixados em `pipelines/phase0.py` (B04 = 3, B03 = 2, B8A = 8, base 0), conferidos contra a
+>   tabela do cartão do dataset. O carregamento atual é via `tacoreader` (`tacofoundation:cloudsen12-l1c/-l2a`),
+>   com uma cópia local das 3 bandas por sessão (`train/cache.py`).
+> - **Ainda a verificar para a Fase 3:** a resolução real de cada uma das 13 bandas no arquivo. O cache atual só
+>   guarda R-G-NIR; a Fase 3 precisa de outro cache com as 13 bandas em L1C.
+> - **No-data nas imagens:** o cartão do dataset define 99 como no-data também para as bandas ópticas, e o código
+>   segue isso. Um pixel real com valor exatamente 99 (reflectância 0,0099, possível em água escura no NIR) é
+>   tratado como no-data; efeito esperado pequeno, mas vale citar como limitação.
+
 ### 2.12 Setup de treino da Fase 2 — o que fixar e o que herdar
 
 - **Herdar do OCM o que é metodologia, fixar empiricamente o que é ajuste.** O que vem do paper e não se mexe: cross-entropy loss, Z-score dinâmico, treino multirresolução, augmentations sintéticos de domínio (image tear, random rectangle, scene edge). Isso é o que define "reproduzir o OCM"; alterar descaracteriza a comparação.
 - **O que o paper não fixa publicamente (otimizador exato, LR, schedule, nº de épocas, batch) precisa ser declarado como decisão sua e mantido idêntico entre as arquiteturas comparadas.** O ponto crítico do experimento CNN-vs-transformer não é usar os "melhores" hiperparâmetros de cada um — é usar o **mesmo protocolo** para os dois, senão o resultado confunde "arquitetura melhor" com "hiperparâmetro mais bem ajustado". Default razoável e defensável para segmentação com backbone pré-treinado: AdamW, LR base na ordem de 1e-4 a 1e-3 com schedule cosseno e warmup curto, batch limitado pela VRAM (ver 2.14), early stopping por BOA de validação. **Registrar esses valores no texto da dissertação como escolha controlada, não como ótimo.**
 - **Seeds múltiplas continuam importantes, mas o papel delas mudou com a decisão de 2.10.** Com o Wilcoxon signed-rank pareado por *cena* (não por seed), o teste estatístico não depende mais de ter muitas seeds — os ~975 pares vêm das cenas de teste. As seeds passam a servir para estimar a robustez/variabilidade do treino (média ± desvio do BOA) e para gerar um BOA por cena estável (via seed representativa ou agregação entre seeds — ver 2.10). Mínimo prático mantido: ~5 seeds por configuração, agora justificadas por robustez, não por poder do teste.
 - **Fixar a seed também do split e do augmentation, não só da inicialização de pesos.** Reprodutibilidade real exige que a ordem dos dados e os augmentations aleatórios sejam determinísticos dado a seed; do contrário "5 seeds" varia em coisas que você não controla.
+
+> **Revisão 29/10/2026 — esta seção foi substituída pelo `docs/adr/ADR-0023.md`.** O resumo do que vale:
+>
+> | Item | Decisão em vigor | Onde |
+> |---|---|---|
+> | Arquiteturas | Ensemble OCM (regnety_004 + convnextv2_nano, U-Net dinâmica do fastai) × Swin-T + UPerNet (HF transformers), 3 bandas R-G-NIR, saída em 4 classes | `models/` |
+> | Inicialização | Pesos ImageNet nos encoders dos dois; decoders aleatórios | ADR D4 |
+> | Multirresolução | 9–22 m para os dois (não 9–50 m): abaixo de 224 px o estágio 4 do Swin-T fica menor que a janela 7×7 | ADR D1 |
+> | Otimizador e schedule | `fine_tune` do fastai, Adam com weight decay desacoplado 0,01, one-cycle (sobe e desce, já com warmup) — igual para os dois | ADR D2, D5 |
+> | Épocas | 15 + 15 (notebook do OCM); proxy de busca 5 + 5 | `train/protocol.py` |
+> | Batch | Efetivo 128 por acumulação de gradiente; micro-batch decidido uma vez num T4 (OCM 4, Swin 8) | `settings.json` na pasta de treino |
+> | Learning rate | **O único hiperparâmetro que difere**: buscado para cada rede (cada backbone do OCM e o Swin) na mesma grade {3e-5, 1e-4, 3e-4, 1e-3, 3e-3, 1e-2}, mesma seed, mesmo orçamento, mesmo critério, com regra de borda | ADR D2 |
+> | Checkpoint | Menor cross-entropy na validação (não BOA) | ADR D2 |
+> | Seeds | 0 a 4; a busca de LR usa só a seed 0 | `train/protocol.py` |
+> | Precisão | fp16 com loss scaling, igual para os dois | `train/protocol.py` |
+>
+> A frase original "usar o **mesmo protocolo** para os dois" continua valendo, com uma exceção deliberada: um LR
+> único penalizaria sistematicamente o transformer, e liberar a busca sem simetria de orçamento penalizaria o
+> baseline. Por isso o LR é buscado por rede com orçamento idêntico (ADR-0023, "Rejected alternatives").
+>
+> **⚠️ Pendências encontradas na revisão de 29/10/2026 — decidir antes de treinar o Swin:**
+>
+> 1. **As augmentations não estão implementadas.** Image tear, random rectangle, scene edge e rotações/flips
+>    estão declarados em `AugmentationConfig` e gravados em cada manifest, mas nenhum código os aplica
+>    (`train/data.py` não transforma nada). Pelo critério desta própria seção ("herdar do OCM o que é
+>    metodologia"), sem elas não se reproduz o OCM. No paper, sem augmentation o OCM perde cerca de 2 pp em clear
+>    e 2,5 pp em cloud. A comparação continua simétrica (falta nos dois), mas o manifest descreve algo que não
+>    aconteceu.
+> 2. **Overfitting visível nas runs completas.** Nas três runs do OCM terminadas, o melhor checkpoint é sempre a
+>    época 16 de 30 (a primeira da segunda fase) e a perda de validação só sobe depois: regnety s0 0,291 → 0,337,
+>    regnety s1 0,287 → 0,327, convnext s0 0,304 → 0,375. As épocas 17–30 (~47% do custo) não entram no modelo
+>    final. A falta de augmentation é a explicação mais provável. A célula de convergência do notebook só detecta
+>    o caso oposto (melhor época no fim) e não sinaliza isso.
+> 3. **A validação roda em resolução aleatória.** O callback de multirresolução também redimensiona os batches de
+>    validação (o manifest confirma: 4.513 resoluções sorteadas por época = 4.245 batches de treino + 268 de
+>    validação). O LR e o checkpoint são escolhidos por uma perda medida em 9–22 m, enquanto o teste é a 10 m.
+>    Correção: não redimensionar quando `self.training` é falso.
+>
+> Corrigir 1 e 3 muda o protocolo: exige refazer as buscas de LR e as seeds do OCM (a do Swin ainda não começou).
+> A alternativa é manter e declarar como limitação, corrigindo o manifest e o ADR. Qualquer que seja a escolha, a
+> Fase 4 herda o mesmo protocolo (2.16).
+>
+> **Também a registrar na dissertação:**
+> - O ensemble do OCM tem 2 redes e o Swin, 1. Parte da diferença pode vir do ensemble e não da arquitetura (no
+>   paper, o ensemble supera cada backbone sozinha). Sem custo de GPU: comparar também cada backbone isolada com o
+>   Swin, um "ensemble" de 2 seeds do Swin com o OCM, e reportar parâmetros e FLOPs de cada modelo.
+> - O micro-batch difere (OCM 4, Swin 8); o UPerNet usa BatchNorm no decoder, então as estatísticas de BN são
+>   estimadas com lotes de tamanhos diferentes.
 
 ### 2.13 UMAP — rebaixado para visualização apenas
 
@@ -172,17 +307,42 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 - **LOBO é barato (2.6):** 13 forward passes extras por patch (uma remoção de banda por vez), também inferência. Ordem de grandeza menor que a varredura das 286; não é gargalo.
 - **Ordem de grandeza do tempo (para a arguição):** cada amostra é um vetor de 1024-D; um recorte de 224 rende 196 tokens, dos quais (após o filtro de pureza) sobram tipicamente algo como ~100–130 amostras distribuídas pelas classes presentes. A varredura completa é ~8.490 × 286 ≈ **2,4M forward passes**, mas é inferência (sem backward), sobre imagens minúsculas de 224, batchável e paralela. Em GPU mediana (centenas de img/s), isso é da ordem de **~1,5 a 7 horas para a varredura inteira, rodada uma vez** (×4 se usar grade de 4 recortes; ainda < 1 dia). O classificador linear em si (286 regressões logísticas) custa segundos. **Não levar estimativa a priori: cronometrar uma combinação completa e multiplicar por 286** é o número honesto.
 
+> **Revisão 29/10/2026 — custo medido na Fase 2 (Colab, Tesla T4).**
+> - ConvNeXtV2-nano: cerca de 28–30 min por época (estimado pelo intervalo entre os salvamentos de progresso),
+>   ou seja, ~14 h por run completa de 30 épocas e ~5 h por candidato da busca de LR (10 épocas).
+> - Orçamento da Fase 2 como desenhado: 18 runs de busca (6 por rede × 3 redes) + 15 runs completas
+>   (5 seeds × 3 redes), mais a variante `ocm-rgn-cs12-native` do ADR-0023 D3.
+> - O treino roda em várias contas do Colab, compartilhando uma pasta do Drive (`cloudband_treino`), com
+>   travas por run e retomada a cada época (`train/store.py`, `train/progress.py`).
+> - **Armazenamento:** cada estado de progresso tem ~520 MB, e o Drive montado guarda a versão antiga como outro
+>   arquivo a cada salvamento. A pasta `progress/` acumula dezenas dessas cópias. A célula de limpeza do notebook
+>   (`DRIVE_TIDY = "trash"`) precisa ser rodada em cada conta, porque cada uma só apaga o que é dela.
+
 ### 2.15 Reprodutibilidade e versionamento
 
 - **Versionar três coisas separadamente:** (1) código (git), (2) os dados pré-processados/reamostrados (hash do dataset + script de geração, já que reamostragem é uma decisão que afeta resultados — ver 2.11), (3) os pesos pré-treinados exatos do DOFA e do OCM (com a versão/checkpoint, dado que pesos v4 ≠ pesos do paper — ver 2.1).
 - **Congelar versões de biblioteca que afetam numéricos:** `scikit-learn` (de onde saem o classificador linear e o kNN — muda comportamento de solver/regularização entre versões, e é o que agora produz o ranking), `torchgeo` (de onde sai o wrapper do DOFA, com a inconsistência de patch size já documentada em 2.3), `scipy` (variante de Wilcoxon — 2.10). `umap-learn` também, mas agora só afeta figuras de visualização (2.13), não o ranking. Um `requirements.txt`/`environment.yml` com versões fixas evita "funcionava mês passado".
 - **Registrar a seed de cada execução junto com o BOA resultante**, não só no código — num CSV de resultados. É isso que torna o teste de Wilcoxon auditável depois.
 
+> **Revisão 29/10/2026.**
+> - **Feito:** cada run completa grava um manifest com commit do git, configuração, seed, histórico da perda de
+>   validação, resoluções sorteadas e versões dos pacotes; o BOA por patch é salvo em CSV por seed
+>   (`results/*_per_scene_boa_seed{N}.csv` na pasta de treino).
+> - **EM ABERTO — versões não fixadas.** O repositório não tem `requirements.txt` nem `pyproject.toml`, e o
+>   notebook instala `fastai timm transformers` sem versão. Os manifests já mostram deriva dentro da mesma
+>   comparação: `transformers` 5.18.0 nas runs do regnety e 5.20.2 na do convnext. Fixar as versões antes das
+>   próximas runs, principalmente antes do Swin, que depende do `transformers`.
+
 ### 2.16 Ordem de dependência entre as fases — o que pode (e não pode) ser paralelizado
 
 - **A Fase 3 (embeddings/ranking) não depende da Fase 2 (treino das arquiteturas).** O ranking de separabilidade via DOFA usa só os dados rotulados e os pesos pré-treinados — não precisa de nenhum modelo treinado por você. **Consequência de cronograma:** Fase 2 e a extração da Fase 3 podem rodar em paralelo se houver GPU, e a Fase 3 pode até começar antes se a Fase 2 atrasar. Isso é uma folga real no cronograma de 24 meses, útil de mencionar na arguição se questionarem o prazo.
 - **O que é genuinamente sequencial:** Fase 4 (retreino confirmatório com a combinação vencedora) depende do ranking da Fase 3 estar fechado **e** do pipeline de treino da Fase 2 estar validado — ela reusa exatamente o mesmo protocolo de treino, só trocando as bandas de entrada. Não dá para fechar a Fase 4 antes dessas duas.
 - **Risco de cronograma concentrado na Fase 3:** é a fase com mais incógnitas empíricas (contagem real de patches puros por classe, custo real do DOFA, estabilidade do ranking entre o classificador linear e o kNN). É a candidata natural a estourar prazo. Mitigação: o benchmark de "uma combinação completa" (2.14) e a contagem de pureza (checklist seção 4) devem ser feitos **no início** da Fase 3, não no meio — são eles que revelam cedo se o plano precisa de ajuste (ex.: recorrer ao p2000 como fonte adicional).
+
+> **Revisão 29/10/2026.** A Fase 3 ainda não começou: os pacotes `features/`, `tokens/`, `ranking/` e `lobo/`
+> existem mas estão vazios. O **ramo da reflectância** (classificador linear sobre a média das 3 bandas por bloco,
+> 2.4) não usa GPU nenhuma e pode rodar agora, em paralelo com o treino da Fase 2. O primeiro passo é um cache
+> com as 13 bandas em L1C, seguido da contagem de blocos puros por classe (checklist da seção 4).
 
 ### 2.17 Condicionamento por comprimento de onda — a tabela de referência
 
@@ -216,6 +376,12 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 
 - **Não é a mesma resposta para as duas fases.** L1C é reflectância de topo de atmosfera (TOA, inclui o efeito atmosférico); L2A é reflectância de superfície (BOA, já com correção atmosférica via Sen2Cor). Para detecção de *nuvem*, o L1C é discutivelmente mais informativo — a nuvem é fenômeno atmosférico, e a correção do L2A tenta justamente remover sinal atmosférico, operando fora do seu domínio de validade sobre nuvem.
 - **Fase 2 (treino CNN vs. transformer): L1C + L2A, como o OCM.** O paper treina com os dois níveis das mesmas 8.490 patches (16.980 no total — ver 2.1), e a consistência L1C↔L2A é uma força demonstrada do OCM. Reproduzir a metodologia exige o mesmo regime. **Fidelidade reportada em L1C:** o experimento binário cloud/no-cloud do CMIX que se compara ao BOA publicado de Wright et al. (2025) é em L1C (2.9).
+
+> **Revisão 29/10/2026 (ADR-0023 D5).** Treino e validação usam L1C + L2A (16.980 e 1.070 patches). O **teste
+> principal é só L1C** (975 patches): o L2A são as mesmas cenas após correção atmosférica, então somar os dois
+> dobraria a contagem sem acrescentar cenas independentes e inflaria o teste pareado. As mesmas cenas em L2A
+> formam um resultado secundário, reportado à parte. A fidelidade não usa o CloudSEN12 (ver revisão da 2.9).
+
 - **Fase 3 (embeddings/ranking das 286): L1C — decisão fechada.** Três razões convergem:
   1. **O DOFA viu Sentinel-2 em L1C no pré-treino.** A fonte de S2 do DOFA é o **SatlasPretrain** (ver disponibilidade de dados no artigo do DOFA — não SSL4EO-S12, como uma versão anterior desta nota supunha), e o SatlasPretrain usa explicitamente cenas Sentinel-2 **L1C** (os próprios IDs dos produtos são `S2A_MSIL1C_...`/`S2B_MSIL1C_...`). Rodar a Fase 3 em L1C mantém a entrada in-distribution para o DOFA — dissolve a preocupação de OOD que estava aberta aqui.
   2. **O B10 (Cirrus) só existe de fato em L1C.** O B10 é entregue no L1C (TOA), mas NÃO é gerado como banda de reflectância de superfície no L2A. Como várias das 286 combinações incluem o B10, usar L2A tornaria essas combinações degeneradas — e o cirrus é diretamente relevante para detecção de nuvem (perdê-lo é perder sinal útil). Ver também o cuidado com o scale factor N/A do B10 em 2.17.
@@ -273,7 +439,7 @@ for (i, j, classe, puro) in purity_grid:
 
 - [ ] Confirmar shape de saída da extração de tokens (deve ser `(14, 14, dim)`, não um vetor único) antes de rodar em escala.
 - [ ] Confirmar que a extração usa a **penúltima** camada do DOFA, não a última.
-- [ ] Confirmar banda B8A (não B08) em qualquer lugar do pipeline que tente reproduzir a configuração do OCM.
+- [x] Confirmar banda B8A (não B08) em qualquer lugar do pipeline que tente reproduzir a configuração do OCM. **Feito para a Fase 2** (índice 8, base 0, em `pipelines/phase0.py`); repetir no pipeline das 13 bandas.
 - [ ] **Confirmar a ordem física das bandas no arquivo (B01…B12) e montar a tabela `LAMBDA_UM` em µm** (2.17) — um `print` do stack de um patch valida os índices antes de comprometer as 286 combinações.
 - [ ] **Confirmar o scale factor 0.0001 (= reflectância/10000) e tratar o B10/Cirrus à parte** (scale factor N/A — 2.17).
 - [x] ~~Confirmar em qual nível (L1C vs. L2A) o DOFA viu o Sentinel-2 no pré-treino~~ **RESOLVIDO: L1C (via SatlasPretrain). Fase 3 fechada em L1C (2.18).**
@@ -282,7 +448,7 @@ for (i, j, classe, puro) in purity_grid:
 - [ ] Verificar se vale usar o tier p2000 High como fonte adicional já no desenho inicial, não só como plano B reativo.
 - [ ] **Abrir um patch e verificar o shape real de cada banda** — confirmar se o dataset já vem reamostrado a 10m ou se a reamostragem (vizinho mais próximo) é um passo de pipeline a versionar (2.11).
 - [ ] **Benchmark de uma combinação completa**: rodar as 8.490 patches para uma única tripla de bandas e cronometrar — multiplicar por 286 dá a estimativa honesta de custo da Fase 3 (2.14).
-- [ ] **Confirmar a versão dos pesos/dataset de referência do BOA publicado** antes de usá-lo como alvo de fidelidade (pesos v4 ≠ pesos do paper — 2.1, 2.9).
+- [x] ~~**Confirmar a versão dos pesos/dataset de referência do BOA publicado** antes de usá-lo como alvo de fidelidade (pesos v4 ≠ pesos do paper — 2.1, 2.9).~~ **RESOLVIDO:** paper = pesos V1, que não carregam mais; o projeto usa o pacote 1.7.0 com os pesos atuais e valida contra o notebook de referência desse pacote (DIVERGENCES D9, D13, D14).
 - [ ] **Concordância classificador linear vs. kNN**: rodar o ranking com o classificador linear e com o kNN e verificar se o Top-N de combinações é estável entre os dois (2.4).
 - [ ] **Validar o pipeline de cache** dos patches reamostrados (memmap/zarr) antes do loop das 286 — garantir que o fatiamento de bandas retorna a combinação correta (2.14).
 - [ ] Congelar versões de `scikit-learn` (ranking), `torchgeo`, `scipy` e `umap-learn` (só visualização) num arquivo de ambiente (2.15).
@@ -303,3 +469,50 @@ for (i, j, classe, puro) in purity_grid:
 - Referência de apoio sobre parâmetros do DOFA-Large (`embed_dim=1024, depth=24, num_heads=16, patch_size=16, img_size=224`; ~330M parâmetros; pré-treino multissensor incluindo Sentinel-2): Xiong et al., 2024 (arXiv:2403.15356), documentação do `torchgeo` (classe `torchgeo.models.DOFA`) e cartão do modelo. Checkpoint: `dofa_large_patch16_224`.
 - Referência de apoio sobre comprimentos de onda centrais, ordem das bandas e scale factor (0.0001; B10 = N/A): cartão do dataset CloudSEN12+ no HuggingFace (`isp-uv-es/CloudSEN12Plus`) e especificação das bandas do Sentinel-2 MSI (ESA/Sentinel Hub). Carregador atual recomendado: `tacoreader` (`tacofoundation:cloudsen12-l1c` / `-l2a`).
 - Referência de apoio sobre DOFA não ser SOTA absoluto e sobre viés de interpolação por banda (2.19): "GeoCrossBench: Cross-Band Generalization for Remote Sensing", arXiv:2511.02831, 2025 (achado: DOFA/TerraFM não superam DINOv3 in-distribution; queda de 5–25% de desempenho com bandas de teste diferentes das de treino). "Neural Plasticity-Inspired... " comparação com DINOv3: arXiv:2508.10104 (DINOv3 paper, Meta, seção 8.3). "No One Knows the State of the Art in Geospatial Foundation Models", arXiv:2605.12678, 2026 (crise de confiabilidade de benchmark no campo). "Any-Optical-Model: A Universal Foundation Model for Optical Remote Sensing", arXiv:2512.17224, 2025 (crítica nomeada ao DOFA sobre degradação com bandas ausentes/incomuns).
+
+---
+
+## 6. Estado da execução e pendências (atualizado em 29/10/2026)
+
+### Fase 0 — baselines com os pesos publicados do OCM (concluída)
+
+Pacote `omnicloudmask==1.7.0`, pesos mais recentes, notebooks em `notebooks/00_baselines/`.
+
+| Coleção | Pixels | clear | cloud | shadow |
+| --- | --- | --- | --- | --- |
+| PixBox Sentinel-2, 28 cenas | 16.801 | 92,35 | 91,60 | 82,07 |
+| PixBox Landsat 8, 11 cenas | 18.830 | 96,47 | 96,35 | 83,64 |
+| CloudSEN12+ teste, 975 patches | 252.603.975 | 94,32 | 93,91 | 88,02 |
+
+O PixBox Sentinel-2 bate com o notebook de referência do pacote dentro de 0,07 / 0,08 / 0,70 pp
+(`docs/protocols/ocm_protocol.md`).
+
+### Fase 2 — OCM × Swin+UPerNet (em andamento)
+
+| Rede | Busca de LR | LR escolhido | Seeds completas |
+| --- | --- | --- | --- |
+| OCM regnety_004 | completa | 3e-3 (1e-2 divergiu) | 0, 1 |
+| OCM convnextv2_nano | completa | 3e-4 (1e-3 praticamente empatado) | 0; a 1 em andamento |
+| Swin-T + UPerNet | **não iniciada** | — | — |
+| `ocm-rgn-cs12-native` (ADR D3) | não se aplica (LR do paper) | — | não iniciada |
+
+As runs do convnext treinadas a 3e-3 antes da busca própria dele são descartadas (ADR-0023 D2).
+
+### Fases 3 e 4 (não iniciadas)
+
+Pacotes vazios no repositório: `features/`, `tokens/`, `ranking/`, `lobo/`, `sensors/`.
+
+### Pendências, por prioridade
+
+1. **Decidir o protocolo antes de treinar o Swin** (revisão da 2.12): implementar as augmentations e a
+   validação a 10 m e refazer as buscas e seeds do OCM, ou manter e declarar como limitação.
+2. **Fixar as versões dos pacotes** (revisão da 2.15).
+3. **Avaliação agregada por ROI, tamanho de efeito e correção de Holm** (revisão da 2.10). Não exige retreino.
+4. **Linhas extras sem custo de GPU:** cada backbone do OCM isolada × Swin, ensemble de 2 seeds do Swin × OCM,
+   parâmetros e FLOPs (revisão da 2.12).
+5. **Alinhar os documentos:** épocas e LR do OCM em `ocm_protocol.md` × `train/protocol.py` (revisão da 2.1);
+   proxy "10+10, um quinto" no ADR-0023 D2 × 5+5, um terço, no código; `README.md`, `docs/LIMITATIONS.md`,
+   `docs/OPEN_ISSUES.md` e `docs/AUDIT.md` estão vazios, embora o ADR e os protocolos mandem registrar coisas neles.
+6. **Começar o ramo da reflectância da Fase 3** (revisão da 2.16): cache das 13 bandas em L1C e contagem de
+   blocos puros por classe.
+7. **Limpar as cópias antigas de progresso no Drive** em cada conta (revisão da 2.14).
