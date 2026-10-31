@@ -381,6 +381,25 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 > principal é só L1C** (975 patches): o L2A são as mesmas cenas após correção atmosférica, então somar os dois
 > dobraria a contagem sem acrescentar cenas independentes e inflaria o teste pareado. As mesmas cenas em L2A
 > formam um resultado secundário, reportado à parte. A fidelidade não usa o CloudSEN12 (ver revisão da 2.9).
+>
+> **Medido em 31/10/2026** (`datasets/split_audit.py`, `eval/level_similarity.py`, célula após o cache):
+> - Splits: treino 1.698 ROIs, validação 107, teste 195; nenhum ROI em dois splits; todo patch existe nos
+>   dois níveis (8.490 / 535 / 975 em cada). O uso de L1C + L2A não vaza informação entre splits.
+> - Semelhança entre o L1C e o L2A do mesmo patch, 200 patches de treino (mediana [quartis]):
+>
+>   | Banda | Diferença bruta relativa | Correlação | Diferença após o Z-score (`z_rmse`) |
+>   |---|---|---|---|
+>   | B04 | 0,164 [0,105–0,224] | 0,996 [0,987–0,999] | 0,088 [0,042–0,162] |
+>   | B03 | 0,230 [0,160–0,297] | 0,990 [0,968–0,998] | 0,141 [0,068–0,251] |
+>   | B8A | 0,051 [0,031–0,077] | 0,998 [0,987–0,999] | 0,068 [0,039–0,160] |
+>
+>   `z_rmse` vai de 0 (mesma imagem após a normalização) a ~1,41 (imagens sem relação). Antes da normalização as
+>   versões diferem de 5% a 23% em média; depois dela, sobra cerca de 0,07–0,14 desvio-padrão por pixel. Na
+>   prática, a versão L2A de um patch é quase uma cópia da L1C com uma perturbação pequena: cada época mostra
+>   8.490 cenas duas vezes, não 16.980 imagens diferentes. A ordem das bandas (verde > vermelho > NIR) é a
+>   esperada fisicamente, porque o espalhamento atmosférico e a sua correção são maiores em comprimentos de onda
+>   menores. Consequência: descrever o treino como 8.490 cenas em dois níveis, e mais um motivo para implementar
+>   as augmentations (pendência 1 da revisão da 2.12).
 
 - **Fase 3 (embeddings/ranking das 286): L1C — decisão fechada.** Três razões convergem:
   1. **O DOFA viu Sentinel-2 em L1C no pré-treino.** A fonte de S2 do DOFA é o **SatlasPretrain** (ver disponibilidade de dados no artigo do DOFA — não SSL4EO-S12, como uma versão anterior desta nota supunha), e o SatlasPretrain usa explicitamente cenas Sentinel-2 **L1C** (os próprios IDs dos produtos são `S2A_MSIL1C_...`/`S2B_MSIL1C_...`). Rodar a Fase 3 em L1C mantém a entrada in-distribution para o DOFA — dissolve a preocupação de OOD que estava aberta aqui.
