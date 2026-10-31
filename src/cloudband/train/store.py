@@ -11,7 +11,9 @@ leaves no manifest, and the run is trained again instead of being trusted.
 
 from __future__ import annotations
 
+import errno
 import json
+import os
 import shutil
 import tempfile
 import time
@@ -25,13 +27,77 @@ import torch
 from cloudband.train.protocol import LrSearchManifest, LrSearchRun, TrainProtocol
 
 
+# A mounted Drive that sat idle answers its first access with one of these, and the
+# next access works. They also come back, for a while, for an entry trashed from
+# outside the mount.
+DRIVE_HICCUPS = frozenset({errno.ENOTCONN, errno.ESTALE})
+RETRY_WAITS = (1.0, 2.0, 4.0, 8.0, 15.0)
+_sleep = time.sleep
+
+
+class DriveDisconnected(OSError):
+    """The Drive mount stopped answering, not just one file on it."""
+
+
+def _listable(folder: Path) -> bool:
+    try:
+        os.listdir(folder)
+    except OSError:
+        return False
+    return True
+
+
+def _drive_retry(action, path: Path, absent):
+    """Run a read on the Drive, waiting out the errors of a mount that was idle.
+
+    If the error outlasts every wait, the folder decides what it was: a folder that
+    still lists means only this entry is unreadable, a ghost of a file trashed from
+    outside, and `absent()` answers for it; a folder that does not means the mount is
+    gone, and guessing an answer could hand a run that another session holds to this
+    one, so it stops instead.
+    """
+    last = None
+    for wait in (*RETRY_WAITS, None):
+        try:
+            return action()
+        except OSError as error:
+            if error.errno not in DRIVE_HICCUPS:
+                raise
+            last = error
+            if wait is not None:
+                _sleep(wait)
+    if _listable(Path(path).parent):
+        return absent()
+    raise DriveDisconnected(
+        last.errno,
+        f"the Drive mount is not answering ({last.strerror}). Run "
+        'drive.mount("/content/drive", force_remount=True) and then this cell again',
+        str(path),
+    ) from last
+
+
+def _ghost(path: Path):
+    def absent():
+        raise FileNotFoundError(errno.ENOENT, "listed by the Drive but not readable", str(path))
+
+    return absent
+
+
+def _exists(path: Path) -> bool:
+    return _drive_retry(path.is_file, path, absent=lambda: False)
+
+
+def _read_text(path: Path) -> str:
+    return _drive_retry(path.read_text, path, absent=_ghost(path))
+
+
 def _is_file(path: Path) -> bool:
     """is_file() that reads a Drive entry which cannot be read as absent.
 
     Right after files are trashed from outside the mount, the listing can still show
     them for a while, and asking about one fails with "Transport endpoint is not
-    connected". For listing and reporting that means "not there"; the paths that train
-    keep the strict is_file(), so a mount that really dropped stops the run.
+    connected". For listing and reporting that means "not there", at once; the reads
+    that train go through _exists, which first waits for the mount to answer.
     """
     try:
         return path.is_file()
@@ -71,9 +137,8 @@ class RunStore:
 
     def is_done(self, checkpoint_name: str) -> bool:
         """True when the run was fully saved, checkpoint and manifest both."""
-        return (
-            self.manifest_path(checkpoint_name).is_file()
-            and self.checkpoint_path(checkpoint_name).is_file()
+        return _exists(self.manifest_path(checkpoint_name)) and _exists(
+            self.checkpoint_path(checkpoint_name)
         )
 
     def save_run(self, run) -> tuple[Path, Path]:
@@ -118,9 +183,13 @@ class RunStore:
         import torch
 
         path = self.epoch_state_path(name)
-        if not path.is_file():
+        if not _exists(path):
             return None
-        return torch.load(path, map_location="cpu", weights_only=False)
+        return _drive_retry(
+            lambda: torch.load(path, map_location="cpu", weights_only=False),
+            path,
+            absent=_ghost(path),
+        )
 
     def clear_epoch_state(self, name: str) -> None:
         self.epoch_state_path(name).unlink(missing_ok=True)
@@ -240,7 +309,7 @@ class RunStore:
     ) -> None:
         """Keep one finished candidate, so a stopped search never repeats it."""
         path = self.search_progress_path(protocol)
-        records = json.loads(path.read_text()) if path.is_file() else []
+        records = json.loads(_read_text(path)) if _exists(path) else []
         records = [r for r in records if r["learning_rate"] != run.learning_rate]
         records.append(
             {
@@ -260,9 +329,9 @@ class RunStore:
         self, protocol: TrainProtocol, learning_rate: float, budget: tuple, seed: int
     ) -> LrSearchRun | None:
         path = self.search_progress_path(protocol)
-        if not path.is_file():
+        if not _exists(path):
             return None
-        for record in json.loads(path.read_text()):
+        for record in json.loads(_read_text(path)):
             if record["learning_rate"] != learning_rate:
                 continue
             if record["budget"] != list(budget) or record["seed"] != seed:
@@ -287,11 +356,11 @@ class RunStore:
 
     def lock_info(self, name: str) -> dict | None:
         path = self.lock_path(name)
-        if not _is_file(path):
+        if not _exists(path):
             return None
         try:
-            return json.loads(path.read_text())
-        except (json.JSONDecodeError, OSError):
+            return json.loads(_read_text(path))
+        except (json.JSONDecodeError, FileNotFoundError):
             return None
 
     def _write_lock(self, name: str, started: float | None = None) -> float:
@@ -411,13 +480,13 @@ class RunStore:
 
     def load_setting(self, key: str, default=None):
         path = self.settings_path()
-        if not path.is_file():
+        if not _exists(path):
             return default
-        return json.loads(path.read_text()).get(key, default)
+        return json.loads(_read_text(path)).get(key, default)
 
     def save_setting(self, key: str, value) -> None:
         path = self.settings_path()
-        settings = json.loads(path.read_text()) if path.is_file() else {}
+        settings = json.loads(_read_text(path)) if _exists(path) else {}
         settings[key] = value
         partial = path.with_suffix(".json.partial")
         partial.write_text(json.dumps(settings, indent=2))
@@ -431,9 +500,9 @@ class RunStore:
         short. Returns None when the run has no recorded history.
         """
         path = self.manifest_path(checkpoint_name)
-        if not path.is_file():
+        if not _exists(path):
             return None
-        config = json.loads(path.read_text()).get("config", {})
+        config = json.loads(_read_text(path)).get("config", {})
         history = config.get("valid_loss_history") or []
         if not history:
             return None
@@ -452,9 +521,11 @@ class RunStore:
     def load_curves(self, protocol: TrainProtocol) -> dict[float, list[float]]:
         """The validation loss after every epoch of each candidate that has it saved."""
         path = self.curves_path(protocol)
-        if not path.is_file():
+        if not _exists(path):
             return {}
-        return {float(rate): list(curve) for rate, curve in json.loads(path.read_text()).items()}
+        return {
+            float(rate): list(curve) for rate, curve in json.loads(_read_text(path)).items()
+        }
 
     def save_curve(self, protocol: TrainProtocol, learning_rate: float, curve) -> None:
         """Keep the validation curve of one candidate, next to the search records.
@@ -495,9 +566,9 @@ class RunStore:
 
     def load_search(self, protocol: TrainProtocol) -> LrSearchManifest | None:
         path = self.search_path(protocol)
-        if not path.is_file():
+        if not _exists(path):
             return None
-        payload = json.loads(path.read_text())
+        payload = json.loads(_read_text(path))
         return LrSearchManifest(
             architecture=payload["architecture"],
             runs=tuple(LrSearchRun(**run) for run in payload["runs"]),
