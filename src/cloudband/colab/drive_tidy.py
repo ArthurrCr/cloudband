@@ -319,6 +319,7 @@ def run_tidy(
         say('Drive tidy skipped (DRIVE_TIDY = "off"): no Google sign-in was asked for.')
         return None
 
+    store.wake()
     service = service or drive_service()
     folders = {
         resolve_folder(service, folder_parts(str(directory))): SHARED for directory in directories
