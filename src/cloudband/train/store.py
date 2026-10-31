@@ -129,6 +129,31 @@ class RunStore:
         self.checkpoint_dir.mkdir(parents=True, exist_ok=True)
         self.progress_dir.mkdir(parents=True, exist_ok=True)
 
+    def wake(self) -> None:
+        """Make the mount answer before the work that follows reads it.
+
+        A Drive mount left idle, for instance while the local cache is copied, refuses
+        its first access; listing the folders here takes that refusal, with the same
+        waits as every read, so the cell that comes next starts on a mount that answers.
+        """
+        for folder in (self.results_dir, self.checkpoint_dir, self.progress_dir):
+            _drive_retry(lambda folder=folder: os.listdir(folder), folder, absent=lambda: None)
+
+    def largest_files(self, root: Path, count: int = 15, exclude=()) -> list[tuple[Path, int]]:
+        """The biggest files under `root`, skipping entries the Drive lists but cannot read."""
+        self.wake()
+        excluded = set(exclude)
+        sizes = []
+        for path in Path(root).rglob("*"):
+            if path in excluded:
+                continue
+            try:
+                if path.is_file():
+                    sizes.append((path, path.stat().st_size))
+            except OSError:
+                continue
+        return sorted(sizes, key=lambda item: item[1], reverse=True)[:count]
+
     def manifest_path(self, result_name: str) -> Path:
         return self.results_dir / f"{result_name}.json"
 
@@ -232,6 +257,7 @@ class RunStore:
         lists; remove_unused deletes. Entries of the Drive that cannot be read (see _is_file)
         are left out, and added to `skipped` when it is given.
         """
+        self.wake()
         now = time.time() if now is None else now
         found: list[tuple[Path, str]] = []
         live: set[str] = set()

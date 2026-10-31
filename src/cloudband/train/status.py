@@ -334,6 +334,7 @@ def status_report(
     store: RunStore, plans: list[Plan], now: float | None = None
 ) -> StatusReport:
     """Read the shared folder and report the search, every planned run and a summary."""
+    store.wake()
     now = time.time() if now is None else now
     plans = list(plans)
 

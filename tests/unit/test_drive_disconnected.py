@@ -153,3 +153,36 @@ def test_a_finished_run_is_still_found_after_a_hiccup(tmp_path, monkeypatch):
     failing(monkeypatch, "is_file", store.checkpoint_path("run"), times=1)
 
     assert store.is_done("run")
+
+
+def test_waking_an_idle_mount_waits_out_its_first_refusal(tmp_path, monkeypatch, no_waiting):
+    store = make_store(tmp_path)
+    original = os.listdir
+    refused = []
+
+    def idle_once(folder):
+        if not refused:
+            refused.append(folder)
+            raise not_connected(folder)
+        return original(folder)
+
+    monkeypatch.setattr(os, "listdir", idle_once)
+
+    store.wake()
+
+    assert len(refused) == 1
+    assert no_waiting == [store_module.RETRY_WAITS[0]]
+
+
+def test_the_largest_files_skip_entries_that_cannot_be_read(tmp_path, monkeypatch):
+    store = make_store(tmp_path)
+    (store.results_dir / "big.json").write_bytes(b"x" * 300)
+    (store.results_dir / "small.json").write_bytes(b"x" * 10)
+    ghost = store.results_dir / "ghost.json"
+    ghost.write_bytes(b"x" * 1000)
+    failing(monkeypatch, "is_file", ghost, times=100)
+
+    listed = store.largest_files(tmp_path)
+
+    assert [path.name for path, _ in listed][:2] == ["big.json", "small.json"]
+    assert ghost not in [path for path, _ in listed]
