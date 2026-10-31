@@ -284,6 +284,12 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 > A alternativa é manter e declarar como limitação, corrigindo o manifest e o ADR. Qualquer que seja a escolha, a
 > Fase 4 herda o mesmo protocolo (2.16).
 >
+> **Decidido em 31/10/2026: corrigir e recomeçar do zero** (ADR-0023, "Revision 2"). As quatro augmentations do
+> paper do OCM passam a ser aplicadas nos dois modelos, e a validação roda a 10 m; o treino continua
+> multirresolução. Os `run_id` ganharam o sufixo `-v2`, então nada da revisão 1 é relido como resultado; as
+> buscas de LR e as seeds recomeçam para as três redes. A pendência 2 (overfitting) deve ser reavaliada nas
+> runs novas.
+>
 > **Também a registrar na dissertação:**
 > - O ensemble do OCM tem 2 redes e o Swin, 1. Parte da diferença pode vir do ensemble e não da arquitetura (no
 >   paper, o ensemble supera cada backbone sozinha). Sem custo de GPU: comparar também cada backbone isolada com o
@@ -523,8 +529,8 @@ Pacotes vazios no repositório: `features/`, `tokens/`, `ranking/`, `lobo/`, `se
 
 ### Pendências, por prioridade
 
-1. **Decidir o protocolo antes de treinar o Swin** (revisão da 2.12): implementar as augmentations e a
-   validação a 10 m e refazer as buscas e seeds do OCM, ou manter e declarar como limitação.
+1. ~~**Decidir o protocolo antes de treinar o Swin**~~ **Feito (31/10/2026):** revisão 2 do protocolo, com
+   augmentations e validação a 10 m; todas as runs recomeçam com os ids `-v2` (revisão da 2.12).
 2. **Fixar as versões dos pacotes** (revisão da 2.15).
 3. **Avaliação agregada por ROI, tamanho de efeito e correção de Holm** (revisão da 2.10). Não exige retreino.
 4. **Linhas extras sem custo de GPU:** cada backbone do OCM isolada × Swin, ensemble de 2 seeds do Swin × OCM,

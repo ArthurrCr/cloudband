@@ -52,7 +52,10 @@ def toy_learner(model=None):
 
 
 def small(protocol):
-    return replace(protocol, frozen_epochs=1, unfrozen_epochs=1, effective_batch_size=4)
+    # the toy data here are plain tensors, so the per-sample augmentations are off
+    return replace(
+        protocol, frozen_epochs=1, unfrozen_epochs=1, effective_batch_size=4, augment=False
+    )
 
 
 class FakePrecision(Callback):

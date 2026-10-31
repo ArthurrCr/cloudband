@@ -51,11 +51,14 @@ def make_protocol():
 
 
 def make_dls():
+    # with the shared protocol's augmentations, so stopping and continuing is checked
+    # to give the same model with them on (tiny images skip only the tear)
     return build_dataloaders(
         train_table=range(16),
         valid_table=range(8),
         micro_batch_size=4,
         read_sample=fake_read_sample,
+        augmentation=make_protocol().augmentation,
     )
 
 

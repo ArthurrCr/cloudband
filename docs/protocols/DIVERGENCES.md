@@ -24,6 +24,7 @@ Status values: `open`, `resolved`.
 | D13 | OmniCloudMask model version 1.0 weights no longer load | open |
 | D14 | Published weights postdate the paper and were trained differently | resolved |
 | D15 | OCM trains both backbones at one learning rate; we search one per backbone | resolved |
+| D16 | OmniCloudMask augmentations: the paper against the authors' current code | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -313,3 +314,28 @@ that backbone with less search than Swin received. The cost is 12 proxy runs for
 Consequence. The reproduction is of the OCM architecture and data recipe, with the learning
 rate chosen by our own search. What this controlled comparison measures is therefore not
 OCM as published, a rule ADR-0023 already sets for its BOA values.
+
+## D16. OmniCloudMask augmentations: the paper against the authors' current code
+
+Status: resolved by a decision, recorded in ADR-0023, revision 2.
+
+Section 2.9 of the paper lists four augmentations: image tear (10% per batch), random
+rectangle (60% per batch, random fill, one to three channels, label unchanged), scene edge
+(10% per batch, label unchanged) and rotations and flips (100%). The public training code
+(`training/augs.py` and `Train OCM models.ipynb`) is at a later model version. It applies
+those four and also sharpen/blur, clipping of extremes, random crops of large images and
+resampling between 0.07 and 1.11 of the native scale.
+
+What the code adds about the four: the rectangle covers 10–50% of the image with aspect
+0.3–3.3 and a fill between 0 and 10,000, and the tear shifts by up to 10 px. These shape
+parameters are not in the paper and are taken from the code.
+
+One disagreement. In the code, SceneEdge is gated at 10% per batch and then applied to each
+image of that batch with a further 10%, so about 1% of images get a scene edge. The paper
+gives 10%. We follow the paper and apply it to 10% of the samples.
+
+Two differences of form, which leave the share of augmented samples the same: the random
+rectangle and the scene edge are drawn per sample here instead of once per batch, because
+they act on the raw values, which only exist before the per-sample normalization; and
+they come before the resolution draw rather than after it, which does not change what a
+rectangle or an edge is.

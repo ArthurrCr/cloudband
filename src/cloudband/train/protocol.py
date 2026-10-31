@@ -72,10 +72,18 @@ def is_swin_viable(gsd_m: float) -> bool:
 
 @dataclass(frozen=True)
 class AugmentationConfig:
+    """OmniCloudMask paper, section 2.9; the shape parameters are the ones the authors'
+    training notebook passes to their transforms (training/augs.py)."""
+
     image_tear_prob: float = 0.10
     random_rectangle_prob: float = 0.60
     scene_edge_prob: float = 0.10
     rotation_flip_prob: float = 1.00
+    tear_displacement: int = 10
+    rectangle_min_area: float = 0.1
+    rectangle_max_area: float = 0.5
+    rectangle_min_aspect: float = 0.3
+    rectangle_max_fill: int = 10000
 
 
 @dataclass(frozen=True)
@@ -106,31 +114,49 @@ class TrainProtocol:
     # about 2.3x faster per step on a T4. It is a systems choice, identical for
     # both architectures, and it changes the numerics slightly.
     mixed_precision: bool = True
+    # Whether `augmentation` is applied. Protocol revision 1 declared the
+    # augmentations without applying them; its runs record False here.
+    augment: bool = False
+    # Validate at the native 10 m instead of at a resolution drawn per batch, so the
+    # learning rate and the checkpoint are chosen at the resolution the test uses.
+    native_validation: bool = False
+
+
+# Revision 2 of the protocol (ADR-0023, "Revision 2"): the augmentations are applied
+# and validation runs at 10 m. The run ids change with it, so no file of revision 1
+# (ids without the suffix) can be read back as a result of this one.
+PROTOCOL_REVISION = "v2"
 
 
 def ocm_shared_protocol(learning_rate: float) -> TrainProtocol:
     return TrainProtocol(
-        run_id="ocm-rgn-cs12-shared",
+        run_id=f"ocm-rgn-cs12-shared-{PROTOCOL_REVISION}",
         architecture="ocm",
         learning_rate=learning_rate,
+        augment=True,
+        native_validation=True,
     )
 
 
 def swin_shared_protocol(learning_rate: float) -> TrainProtocol:
     return TrainProtocol(
-        run_id="swin-rgn-cs12-shared",
+        run_id=f"swin-rgn-cs12-shared-{PROTOCOL_REVISION}",
         architecture="swin",
         learning_rate=learning_rate,
+        augment=True,
+        native_validation=True,
     )
 
 
 def ocm_native_protocol() -> TrainProtocol:
     return TrainProtocol(
-        run_id="ocm-rgn-cs12-native",
+        run_id=f"ocm-rgn-cs12-native-{PROTOCOL_REVISION}",
         architecture="ocm",
         learning_rate=0.005,
         min_gsd_m=NATIVE_MIN_GSD_M,
         max_gsd_m=NATIVE_MAX_GSD_M,
+        augment=True,
+        native_validation=True,
     )
 
 

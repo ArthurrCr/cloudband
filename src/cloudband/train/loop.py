@@ -16,6 +16,7 @@ from fastai.callback.training import GradientAccumulation
 from fastai.learner import Learner
 from fastai.torch_core import default_device, set_seed
 
+from cloudband.train.augment import GeometricAugmentation
 from cloudband.train.progress import (
     STATE_VERSION,
     EpochSaver,
@@ -64,7 +65,11 @@ def resize_annotation(annotation: torch.Tensor, size: int) -> torch.Tensor:
 
 
 class MixedResolutionCallback(Callback):
-    """Resamples every batch to one GSD drawn at random from a range."""
+    """Resamples every batch to one GSD drawn at random from a range.
+
+    With native_validation, validation batches keep the native resolution, the one the
+    test is scored at; otherwise they are resampled like training batches.
+    """
 
     def __init__(
         self,
@@ -72,16 +77,20 @@ class MixedResolutionCallback(Callback):
         max_gsd_m: float,
         rng: np.random.Generator,
         nodata_value: float | None = None,
+        native_validation: bool = False,
     ):
         self.min_gsd_m = min_gsd_m
         self.max_gsd_m = max_gsd_m
         self.rng = rng
         self.nodata_value = nodata_value
+        self.native_validation = native_validation
         self.last_gsd_m: float | None = None
         self.last_size_px: int | None = None
         self.gsd_history: list[float] = []
 
     def before_batch(self):
+        if self.native_validation and not self.training:
+            return
         gsd = sample_gsd(self.min_gsd_m, self.max_gsd_m, self.rng)
         size = patch_size_px(gsd)
         images, annotations = self.learn.xb[0], self.learn.yb[0]
@@ -102,6 +111,7 @@ def mixed_resolution_callback(
         max_gsd_m=protocol.max_gsd_m,
         rng=np.random.default_rng(seed),
         nodata_value=nodata_value,
+        native_validation=protocol.native_validation,
     )
 
 
@@ -148,6 +158,24 @@ def checkpoint_name(protocol: TrainProtocol, seed: int, suffix: str = "") -> str
 
 class TrainingDiverged(RuntimeError):
     """The loss became NaN or infinite, so the run did not finish its epochs."""
+
+
+def _check_augmentation(learner: Learner, protocol: TrainProtocol) -> None:
+    """The training data must apply the per-sample augmentations the protocol asks for.
+
+    They live in the dataset, built apart from the protocol, so a mismatch would train
+    without them while the manifest says otherwise, which is how revision 1 went.
+    """
+    dataset = getattr(getattr(learner.dls, "train", None), "dataset", None)
+    applied = getattr(dataset, "augmentation", None)
+    wanted = protocol.augmentation if protocol.augment else None
+    if applied != wanted:
+        raise ValueError(
+            f"{protocol.run_id}: the protocol asks for augmentation={wanted}, the "
+            f"training dataloader applies {applied}; build the dataloaders with "
+            "build_dataloaders(..., augmentation=protocol.augmentation if "
+            "protocol.augment else None)"
+        )
 
 
 def _check_resume(state: dict, fingerprint: dict) -> None:
@@ -225,6 +253,9 @@ def fit_protocol(
             f"seed {seed} is not one of the protocol's seeds {protocol.seeds}"
         )
 
+    if protocol.augment or protocol.native_validation:
+        _check_augmentation(learner, protocol)
+
     set_seed(seed, reproducible=True)
     resolution_cb = mixed_resolution_callback(
         protocol, seed=seed, nodata_value=nodata_value
@@ -236,6 +267,8 @@ def fit_protocol(
     guard_cbs = [TerminateOnNaNCallback()]
     if _use_mixed_precision(protocol):
         guard_cbs.append(MixedPrecision())
+    if protocol.augment:
+        guard_cbs.append(GeometricAugmentation(protocol.augmentation))
 
     fingerprint = {
         "name": name,
@@ -247,6 +280,8 @@ def fit_protocol(
         "effective_batch_size": protocol.effective_batch_size,
         "min_gsd_m": protocol.min_gsd_m,
         "max_gsd_m": protocol.max_gsd_m,
+        "augment": protocol.augment,
+        "native_validation": protocol.native_validation,
     }
     resume = progress_store.load_epoch_state(name) if progress_store else None
     if resume is not None:
