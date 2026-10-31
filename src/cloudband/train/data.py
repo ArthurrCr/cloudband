@@ -12,7 +12,9 @@ from torch.utils.data import Dataset
 
 from cloudband.datasets import cloudsen12 as dataset
 from cloudband.pipelines.phase0 import select_rgn
+from cloudband.train.augment import augment_sample
 from cloudband.train.normalize import dynamic_z_score
+from cloudband.train.protocol import AugmentationConfig
 
 SampleReader = Callable[[pd.DataFrame, int, bool], dataset.Sample]
 
@@ -26,11 +28,13 @@ class CloudSen12Dataset(Dataset):
         crop_to_valid: bool = True,
         read_sample: SampleReader = dataset.read_sample,
         bands_selected: bool = False,
+        augmentation: AugmentationConfig | None = None,
     ):
         self.table = table
         self.crop_to_valid = crop_to_valid
         self.read_sample = read_sample
         self.bands_selected = bands_selected
+        self.augmentation = augmentation
 
     def __len__(self) -> int:
         return len(self.table)
@@ -38,7 +42,10 @@ class CloudSen12Dataset(Dataset):
     def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
         sample = self.read_sample(self.table, index, self.crop_to_valid)
         stack = sample.image if self.bands_selected else select_rgn(sample.image)
-        image = dynamic_z_score(stack.astype(np.float32))
+        stack = stack.astype(np.float32)
+        if self.augmentation is not None:
+            stack = augment_sample(stack, self.augmentation, dataset.NODATA_VALUE)
+        image = dynamic_z_score(stack)
         annotation = sample.annotation.astype(np.int64)
         return torch.from_numpy(image), torch.from_numpy(annotation)
 
@@ -51,6 +58,7 @@ def build_dataloaders(
     read_sample: SampleReader = dataset.read_sample,
     valid_read_sample: SampleReader | None = None,
     bands_selected: bool = False,
+    augmentation: AugmentationConfig | None = None,
 ) -> DataLoaders:
     """Wrap train and validation tables into fastai DataLoaders.
 
@@ -61,9 +69,15 @@ def build_dataloaders(
     valid_read_sample defaults to read_sample; a separate one lets each split
     read from its own local cache. bands_selected says the readers already
     return only the R-G-NIR bands, as a cache does.
+
+    augmentation applies the per-sample augmentations to the training split only;
+    fit_protocol refuses a protocol that asks for them on dataloaders built without.
     """
     train_dataset = CloudSen12Dataset(
-        train_table, read_sample=read_sample, bands_selected=bands_selected
+        train_table,
+        read_sample=read_sample,
+        bands_selected=bands_selected,
+        augmentation=augmentation,
     )
     valid_dataset = CloudSen12Dataset(
         valid_table,

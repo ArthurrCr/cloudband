@@ -84,7 +84,8 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(phase2, "FULL_FROZEN_EPOCHS", FROZEN)
     monkeypatch.setattr(phase2, "FULL_UNFROZEN_EPOCHS", UNFROZEN)
     dls = build_dataloaders(train_table=range(16), valid_table=range(8),
-                            micro_batch_size=4, read_sample=fake_read_sample)
+                            micro_batch_size=4, read_sample=fake_read_sample,
+                            augmentation=protocol().augmentation)
     store = RunStore(
         tmp_path / "drive" / "results", tmp_path / "drive" / "ckpt", tmp_path / "models"
     )
