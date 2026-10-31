@@ -98,7 +98,9 @@ def compare_levels(
                     **compare_channel(first.image[channel], second.image[channel]),
                 }
             )
-    return pd.DataFrame(rows)
+    measures = ["raw_relative_difference", "correlation", "z_rmse"]
+    frame = pd.DataFrame(rows, columns=["patch", "band", *measures])
+    return frame.astype({measure: float for measure in measures})
 
 
 def summarize(comparison: pd.DataFrame) -> pd.DataFrame:

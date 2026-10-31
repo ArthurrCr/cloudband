@@ -24,6 +24,8 @@ def test_disjoint_rois_and_matching_levels_have_no_problem():
 
     assert audit.problems == []
     assert audit.ids_comparable
+    assert audit.rois_checked
+    assert "no ROI is shared between splits and every patch has both levels" in audit.summary
     assert audit.rois_per_split == {"train": 2, "test": 1}
     assert audit.patches_per_split["train"] == {"L1C": 3, "L2A": 3}
 
@@ -68,6 +70,20 @@ def test_levels_named_differently_are_not_taken_for_a_mismatch():
     assert "could not be paired" in audit.summary
 
 
-def test_missing_roi_column_fails_loudly():
-    with pytest.raises(ValueError, match="roi_id"):
-        audit_splits({("L1C", "train"): pd.DataFrame({"tortilla:id": ["a"]})})
+def test_without_a_roi_column_the_roi_check_is_skipped_not_failed():
+    tables = {
+        ("L1C", "train"): pd.DataFrame({"tortilla:id": ["a", "b"]}),
+        ("L2A", "train"): pd.DataFrame({"tortilla:id": ["a", "b"]}),
+    }
+
+    audit = audit_splits(tables)
+
+    assert not audit.rois_checked
+    assert audit.leaked_rois == {}
+    assert audit.problems == []
+    assert "ROI check did not run" in audit.summary
+
+
+def test_missing_id_column_fails_loudly():
+    with pytest.raises(ValueError, match="tortilla:id"):
+        audit_splits({("L1C", "train"): pd.DataFrame({"roi_id": ["r1"]})})

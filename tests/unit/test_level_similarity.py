@@ -85,3 +85,10 @@ def test_compare_levels_gives_one_row_per_patch_and_band():
     assert set(comparison.band) == {"B04", "B03", "B8A"}
     assert np.allclose(comparison.z_rmse, 0.0, atol=1e-5)
     assert list(summarize(comparison).index) == ["B04", "B03", "B8A"]
+
+
+def test_no_pairs_gives_an_empty_table_that_still_summarizes():
+    comparison = compare_levels([], pd.DataFrame({"tortilla:id": []}), lambda *args: None)
+
+    assert comparison.empty
+    assert summarize(comparison).empty
