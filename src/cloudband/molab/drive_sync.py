@@ -27,8 +27,12 @@ side only at the next push.
 from __future__ import annotations
 
 import json
+<<<<<<< HEAD
 import os
 import shutil
+=======
+import tempfile
+>>>>>>> molab-drive-not-owned
 import threading
 import time
 from collections.abc import Callable
@@ -53,6 +57,16 @@ class PushReport:
     @property
     def changed(self) -> bool:
         return bool(self.uploaded or self.deleted)
+
+
+# what a removed lock becomes when it cannot be trashed: held by nobody, long expired
+RELEASED_LOCK = {"owner": "released", "started": 0.0, "heartbeat": 0.0}
+
+
+def _not_allowed(error: Exception) -> bool:
+    """A 403 of the Drive API: this account may not do that to that file."""
+    status = getattr(getattr(error, "resp", None), "status", None)
+    return str(status) == "403"
 
 
 def _skipped(name: str) -> bool:
@@ -337,13 +351,43 @@ class DriveMirror:
                 and self._local_signature(r) is None
             ]
             for relative in gone:
-                known = self._seen.pop(relative, None)
+                known = self._seen.get(relative)
                 if known is not None:
-                    self._trash(known["id"])
+                    try:
+                        self._trash(known["id"])
+                    except Exception as error:
+                        if not _not_allowed(error):
+                            raise
+                        self._pushed.pop(relative)
+                        self._keep_not_owned(relative, known)
+                        continue
+                self._seen.pop(relative, None)
                 self._synced.pop(relative, None)
                 self._pushed.pop(relative)
                 deleted.append(relative)
             return PushReport(tuple(uploaded), tuple(deleted), tuple(waiting))
+
+    def _keep_not_owned(self, relative: str, known: dict) -> None:
+        """A file another Google account owns: this account may change it, not trash it.
+
+        A lock is then overwritten with a lock nobody holds (heartbeat 0, so any session
+        takes the run over at once), which is what removing it means. Any other file stays
+        on the Drive, for drive_tidy run in its owner's account; it is not brought back
+        here, since it was removed on purpose.
+        """
+        if relative.endswith(".lock"):
+            pure = PurePosixPath(relative)
+            with tempfile.TemporaryDirectory() as scratch:
+                released = Path(scratch) / pure.name
+                released.write_text(json.dumps(RELEASED_LOCK))
+                reply = self._upload(
+                    released, pure.name, self._folder_id(pure.parent.as_posix()), known["id"]
+                )
+            self._seen[relative] = reply
+            self._synced[relative] = (reply["id"], reply["modifiedTime"])
+            return
+        self.log(f"{relative}: owned by another Google account, so it stays on the Drive")
+        self._synced[relative] = (known["id"], known["modifiedTime"])
 
     def push_all(self) -> PushReport:
         """Push without waiting for recent files to settle, for the end of a cell."""
