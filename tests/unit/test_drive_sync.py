@@ -264,3 +264,24 @@ def test_settings_written_by_two_sessions_are_both_kept(tmp_path, no_folder_reso
 
     assert first.load_setting("micro_batch") == {"ocm": 8}
     assert first.load_setting("other") == 1
+
+
+def test_a_worker_starts_from_the_notebook_copy_without_downloading_again(
+    tmp_path, no_folder_resolution
+):
+    drive = colab_drive()
+    notebook = FakeDrive(tmp_path / "notebook", drive)
+    notebook.restore()
+    notebook.save_state()
+    worker = FakeDrive(tmp_path / "worker", drive)
+    downloads = []
+    worker._download = lambda file_id, dest: downloads.append(file_id)
+
+    assert worker.seed_from(notebook.local_dir) == 3
+    assert downloads == []
+    assert (worker.local_dir / "checkpoints/ocm.pth").read_bytes() == b"weights"
+
+    write(worker.local_dir / "results/progress/w.lock", "worker")
+    worker.push_all()
+    assert not (notebook.local_dir / "results/progress/w.lock").exists()
+    assert (notebook.local_dir / "checkpoints/ocm.pth").read_bytes() == b"weights"

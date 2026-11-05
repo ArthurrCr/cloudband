@@ -215,7 +215,7 @@ def _(
     drive = drive_service(google_credentials)
     _me = drive.about().get(fields="user(emailAddress)").execute()["user"]["emailAddress"]
     print(f"Google Drive of {_me}")
-    return (drive,)
+    return drive, google_credentials
 
 
 @app.cell
@@ -487,7 +487,7 @@ def _(
 
     ocm_dls = make_dataloaders(ocm_micro_batch, ocm_protocol)
     swin_dls = make_dataloaders(swin_micro_batch, swin_protocol)
-    return ocm_dls, ocm_protocol, swin_dls, swin_protocol
+    return NUM_WORKERS, ocm_dls, ocm_protocol, swin_dls, swin_protocol
 
 
 @app.cell
@@ -525,6 +525,73 @@ def _(
         ]
     )
     return (plans,)
+
+
+@app.cell
+def _(mo):
+    from cloudband.molab import workers as parallel
+
+    worker_count = mo.ui.slider(1, 4, value=3, label="parallel workers", show_value=True)
+    parallel_button = mo.ui.run_button(label="Start parallel workers", kind="success")
+    stop_workers_button = mo.ui.run_button(label="Stop workers", kind="danger")
+    mo.hstack([worker_count, parallel_button, stop_workers_button], justify="start")
+    return parallel, parallel_button, stop_workers_button, worker_count
+
+
+@app.cell
+def _(
+    NUM_WORKERS,
+    PROJECT_DIR,
+    TRAINING_DIR,
+    WORK_DIR,
+    drive_mirror,
+    google_credentials,
+    mo,
+    parallel,
+    parallel_button,
+    store,
+    worker_count,
+):
+    mo.stop(not parallel_button.value, "Parallel workers wait for the button above.")
+    assert store.load_setting("micro_batch") is not None, "run the micro-batch cell first"
+
+    WORKER_TOKEN_FILE = WORK_DIR / "gdrive_token.json"
+    WORKER_TOKEN_FILE.write_text(google_credentials.to_json())
+    drive_mirror.save_state()
+    started_workers = parallel.launch(
+        worker_count.value,
+        WORK_DIR,
+        PROJECT_DIR,
+        TRAINING_DIR,
+        WORKER_TOKEN_FILE,
+        num_workers=NUM_WORKERS,
+    )
+    print(f"{len(started_workers)} worker(s) started; logs in {WORK_DIR}/worker<k>.log")
+    return (started_workers,)
+
+
+@app.cell
+def _(mo, started_workers, stop_workers_button):
+    if stop_workers_button.value:
+        for _worker in started_workers:
+            _worker.stop()
+        print("workers asked to stop; each sends its files to the Drive before exiting")
+    worker_refresh = mo.ui.refresh(default_interval="30s", label="refresh")
+    worker_refresh
+    return (worker_refresh,)
+
+
+@app.cell
+def _(mo, parallel, started_workers, worker_refresh):
+    worker_refresh
+    mo.vstack(
+        [mo.plain_text(parallel.gpu_summary() + "\n" + parallel.cpu_summary())]
+        + [
+            mo.vstack([mo.plain_text(f"worker {_w.index}: {_w.state}"), mo.plain_text(_w.tail())])
+            for _w in started_workers
+        ]
+    )
+    return
 
 
 @app.cell
