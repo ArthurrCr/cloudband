@@ -35,6 +35,6 @@ def test_training_and_maintenance_only_start_from_a_button():
 def test_it_uses_the_same_drive_folder_as_colab_and_pushes_after_training():
     text = source()
     assert 'DRIVE_FOLDER = ("cloudband_treino",)' in text
-    assert text.index("drive_mirror.restore()") < text.index("store = RunStore(")
+    assert text.index("drive_mirror.restore()") < text.index("store = DriveRunStore(")
     training = text.index("run_everything(\n")
     assert text.index("drive_mirror.push_all()", training) > training

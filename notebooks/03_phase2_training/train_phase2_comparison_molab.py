@@ -79,6 +79,7 @@ def _(os):
     from cloudband.colab import drive_tidy
     from cloudband.molab.drive_sync import (
         DriveMirror,
+        DriveRunStore,
         client_config_from,
         drive_service,
         finish_sign_in,
@@ -100,11 +101,11 @@ def _(os):
 
     return (
         DriveMirror,
+        DriveRunStore,
         LocalCache,
         OcmEnsemble,
         PAPER_BACKBONES,
         Plan,
-        RunStore,
         balanced_overall_accuracy,
         build_dataloaders,
         build_predictor,
@@ -248,7 +249,7 @@ def _(hf_token_box, os):
 
 
 @app.cell
-def _(DriveMirror, PROJECT_DIR, RunStore, WORK_DIR, drive, start):
+def _(DriveMirror, DriveRunStore, PROJECT_DIR, WORK_DIR, drive, start):
     DRIVE_FOLDER = ("cloudband_treino",)
     TRAINING_DIR = WORK_DIR / "cloudband_treino"
     RESULTS_DIR = TRAINING_DIR / "results"
@@ -260,10 +261,11 @@ def _(DriveMirror, PROJECT_DIR, RunStore, WORK_DIR, drive, start):
     print(f"{drive_mirror.restore()} file(s) restored from {drive_mirror.where}")
     drive_mirror.start_background(interval_seconds=300)
 
-    store = RunStore(
+    store = DriveRunStore(
         results_dir=RESULTS_DIR,
         checkpoint_dir=CHECKPOINT_DIR,
         source_dir=PROJECT_DIR / "models",
+        mirror=drive_mirror,
     )
 
     # True only when a run is reported "busy" and the session that held it is gone.
@@ -609,6 +611,7 @@ def _(
     test_table,
     torch,
 ):
+    store.wake()
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
 
 

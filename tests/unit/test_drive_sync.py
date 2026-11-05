@@ -9,13 +9,18 @@ from cloudband.colab.drive_tidy import FOLDER, SHORTCUT
 from cloudband.molab.drive_sync import DriveMirror, code_from, local_files, pick_copy
 
 
+_ids = (f"new{i}" for i in itertools.count())
+_times = (f"2030-01-01T00:00:{i:06d}Z" for i in itertools.count())
+
+
 class FakeDrive(DriveMirror):
     """A DriveMirror whose Drive is a dict of entries, with no network."""
 
     def __init__(self, local_dir, entries, **kwargs):
+        kwargs.setdefault("clock", lambda: 1e10)
         super().__init__(service=None, local_dir=local_dir, log=lambda _m: None, **kwargs)
         self.entries = entries          # id -> dict(name, mimeType, parent, data, ...)
-        self.ids = (f"new{i}" for i in itertools.count())
+        self.ids = _ids
         self.trashed = []
 
     def _children(self, folder_id):
@@ -39,12 +44,13 @@ class FakeDrive(DriveMirror):
         self.entries[key] = {
             "name": name, "mimeType": "application/octet-stream", "parent": parent_id,
             "data": path.read_bytes(), "size": str(path.stat().st_size),
-            "modifiedTime": "2030-01-01T00:00:00Z",
+            "modifiedTime": next(_times),
         }
-        return key
+        return {"id": key, "modifiedTime": self.entries[key]["modifiedTime"]}
 
     def _trash(self, file_id):
-        self.trashed.append(self.entries.pop(file_id)["name"])
+        if file_id in self.entries:
+            self.trashed.append(self.entries.pop(file_id)["name"])
 
 
 def file(name, parent, data, modified="2026-01-01T00:00:00Z"):
@@ -166,3 +172,95 @@ def test_the_code_is_read_from_the_address_the_browser_was_sent_to():
     url = "http://localhost/?state=abc&code=4/0AbC-d_e&scope=https://www.googleapis.com/auth/drive"
     assert code_from(url) == "4/0AbC-d_e"
     assert code_from("  4/0raw  ") == "4/0raw"
+
+
+def test_a_pull_brings_what_another_session_sent_and_drops_what_it_removed(
+    tmp_path, no_folder_resolution
+):
+    drive = colab_drive()
+    mine = FakeDrive(tmp_path / "mine", drive)
+    other = FakeDrive(tmp_path / "other", drive)
+    mine.restore()
+    other.restore()
+    write(other.local_dir / "results/progress/x.lock", "theirs")
+    other.push_all()
+
+    assert "results/progress/x.lock" in mine.pull()
+    assert (mine.local_dir / "results/progress/x.lock").read_text() == "theirs"
+
+    (other.local_dir / "results/progress/x.lock").unlink()
+    other.push_all()
+    mine.pull()
+    assert not (mine.local_dir / "results/progress/x.lock").exists()
+
+
+def test_a_change_made_here_and_not_yet_sent_is_not_overwritten_by_a_pull(
+    tmp_path, no_folder_resolution
+):
+    drive = colab_drive()
+    mine = FakeDrive(tmp_path / "mine", drive)
+    other = FakeDrive(tmp_path / "other", drive)
+    mine.restore()
+    other.restore()
+    write(other.local_dir / "results/settings.json", "theirs")
+    other.push_all()
+    write(mine.local_dir / "results/settings.json", "mine")
+
+    mine.pull()
+
+    assert (mine.local_dir / "results/settings.json").read_text() == "mine"
+
+
+# ---- two sessions sharing the Drive through DriveRunStore ----
+
+from cloudband.molab.drive_sync import DriveRunStore  # noqa: E402
+
+
+def session(tmp_path, label, drive):
+    mirror = FakeDrive(tmp_path / label, drive)
+    mirror.restore()
+    store = DriveRunStore(
+        mirror.local_dir / "results", mirror.local_dir / "checkpoints",
+        tmp_path / label / "models", mirror=mirror,
+    )
+    return store
+
+
+def no_wait(_seconds):
+    return None
+
+
+def test_a_run_taken_by_one_session_is_refused_to_the_other(tmp_path, no_folder_resolution):
+    drive = colab_drive()
+    first, second = session(tmp_path, "a", drive), session(tmp_path, "b", drive)
+
+    assert first.claim("run-seed0", sleep=no_wait)
+    assert not second.claim("run-seed0", sleep=no_wait)
+
+    first.release("run-seed0")
+    assert second.claim("run-seed0", sleep=no_wait)
+
+
+def test_a_run_finished_by_another_session_is_not_taken_again(tmp_path, no_folder_resolution):
+    drive = colab_drive()
+    first, second = session(tmp_path, "a", drive), session(tmp_path, "b", drive)
+    assert first.claim("run-seed0", sleep=no_wait)
+    write(first.checkpoint_path("run-seed0"), "weights")
+    write(first.manifest_path("run-seed0"), "{}")
+    first.mirror.push_all()
+    first.release("run-seed0")
+
+    assert not second.claim("run-seed0", sleep=no_wait)
+    assert second.is_done("run-seed0")
+
+
+def test_settings_written_by_two_sessions_are_both_kept(tmp_path, no_folder_resolution):
+    drive = colab_drive()
+    first, second = session(tmp_path, "a", drive), session(tmp_path, "b", drive)
+
+    first.save_setting("micro_batch", {"ocm": 8})
+    second.save_setting("other", 1)
+    first.mirror.pull()
+
+    assert first.load_setting("micro_batch") == {"ocm": 8}
+    assert first.load_setting("other") == 1
