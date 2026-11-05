@@ -27,6 +27,8 @@ side only at the next push.
 from __future__ import annotations
 
 import json
+import os
+import shutil
 import tempfile
 import threading
 import time
@@ -40,6 +42,7 @@ from cloudband.train.store import RunStore
 DRIVE_SCOPE = "https://www.googleapis.com/auth/drive"
 MIRRORED = ("results", "checkpoints")
 SKIPPED_SUFFIXES = (".partial",)
+STATE_FILE = ".drive_mirror.json"
 
 
 @dataclass(frozen=True)
@@ -386,6 +389,47 @@ class DriveMirror:
     def push_all(self) -> PushReport:
         """Push without waiting for recent files to settle, for the end of a cell."""
         return self.push(settle_seconds=0.0)
+
+    def save_state(self) -> Path:
+        """Write what this mirror knows of the Drive, for seed_from in another process."""
+        with self._lock:
+            path = self.local_dir / STATE_FILE
+            payload = {"folders": self._folders, "seen": self._seen, "synced": self._synced}
+            partial = path.with_name(path.name + ".partial")
+            partial.write_text(json.dumps(payload))
+            partial.replace(path)
+            return path
+
+    def seed_from(self, other_dir: Path) -> int:
+        """Start from another mirror's folder instead of downloading the Drive again.
+
+        The files are hard links (copies where links are not possible): every write of
+        the store replaces a file instead of changing it, so the two folders never change
+        each other's files. A pull then brings what changed since that mirror's state.
+        """
+        other_dir = Path(other_dir)
+        state = json.loads((other_dir / STATE_FILE).read_text())
+        with self._lock:
+            self._folders = dict(state["folders"])
+            self._seen = dict(state["seen"])
+            self._synced, self._pushed = {}, {}
+            for relative, version in state["synced"].items():
+                source, dest = other_dir / relative, self.local_dir / relative
+                if not source.is_file():
+                    continue
+                dest.parent.mkdir(parents=True, exist_ok=True)
+                dest.unlink(missing_ok=True)
+                try:
+                    os.link(source, dest)
+                except OSError:
+                    shutil.copy2(source, dest)
+                self._synced[relative] = tuple(version)
+                self._pushed[relative] = _signature(dest)
+            for top in self.mirrored:
+                (self.local_dir / top).mkdir(parents=True, exist_ok=True)
+            self._restored = True
+        self.pull()
+        return len(self._synced)
 
     def relative(self, path: Path) -> str:
         return Path(path).resolve().relative_to(self.local_dir.resolve()).as_posix()
