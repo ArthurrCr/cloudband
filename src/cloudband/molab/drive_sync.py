@@ -27,12 +27,9 @@ side only at the next push.
 from __future__ import annotations
 
 import json
-<<<<<<< HEAD
 import os
 import shutil
-=======
 import tempfile
->>>>>>> molab-drive-not-owned
 import threading
 import time
 from collections.abc import Callable
