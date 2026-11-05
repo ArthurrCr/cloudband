@@ -8,9 +8,11 @@
 #     "scipy",
 #     "tacoreader",
 #     "rasterio",
-#     "huggingface-hub",
 #     "pandas",
 #     "requests",
+#     "google-api-python-client",
+#     "google-auth",
+#     "google-auth-oauthlib",
 # ]
 # ///
 import marimo
@@ -22,38 +24,17 @@ app = marimo.App()
 @app.cell
 def _():
     import marimo as mo
+    from pathlib import Path
 
-    return (mo,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    # Phase 2 training: OCM against Swin+UPerNet (molab)
-
-    The same run as `train_phase2_comparison.ipynb`, written for [molab](https://molab.marimo.io).
-
-    Before the first run:
-
-    1. In the notebook specs button of the header, **turn the GPU on**.
-    2. Have a Hugging Face token of type **Write**. molab has no Google Drive mount and its
-       disk goes away with the session, so the shared folder of the Colab notebook becomes a
-       **private dataset repository** on the Hugging Face Hub. The token reads CloudSEN12+ and
-       keeps that repository.
-    3. Training and maintenance only start from their buttons, so "run all" is safe.
-
-    One session at a time per repository: two sessions pushing to the same repository would
-    overwrite each other's runs.
-    """)
-    return
+    NOTEBOOK_DIR = Path(mo.notebook_dir() or Path.cwd()).resolve()
+    return NOTEBOOK_DIR, Path, mo
 
 
 @app.cell
-def _():
+def _(Path):
     import os
     import subprocess
     import sys
-    from pathlib import Path
 
     REPO_URL = "https://github.com/ArthurrCr/cloudband.git"
     BRANCH = "main"
@@ -95,7 +76,16 @@ def _(os):
     from cloudband.eval.metrics import balanced_overall_accuracy
     from cloudband.models.ocm import PAPER_BACKBONES, OcmEnsemble, build_unet, ocm_search_protocol
     from cloudband.models.swin_upernet import build_swin_upernet
-    from cloudband.molab.hub_sync import HubMirror
+    from cloudband.colab import drive_tidy
+    from cloudband.molab.drive_sync import (
+        DriveMirror,
+        client_config_from,
+        drive_service,
+        finish_sign_in,
+        load_credentials,
+        start_sign_in,
+        tidy_directories,
+    )
     from cloudband.pipelines.cloudsen12 import per_scene_metric, score_split
     from cloudband.train.cache import LocalCache
     from cloudband.train.comparison import compare_across_seeds
@@ -109,7 +99,7 @@ def _(os):
     from cloudband.train.store import RunStore, load_model_from_checkpoint
 
     return (
-        HubMirror,
+        DriveMirror,
         LocalCache,
         OcmEnsemble,
         PAPER_BACKBONES,
@@ -121,8 +111,13 @@ def _(os):
         build_swin_upernet,
         build_unet,
         checkpoint_name,
+        client_config_from,
         compare_across_seeds,
         dataset,
+        drive_service,
+        drive_tidy,
+        finish_sign_in,
+        load_credentials,
         load_model_from_checkpoint,
         ocm_search_protocol,
         ocm_shared_protocol,
@@ -133,72 +128,137 @@ def _(os):
         run_everything,
         score_split,
         start,
+        start_sign_in,
         status_report,
         swin_shared_protocol,
+        tidy_directories,
         torch,
     )
 
 
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Hugging Face token
+@app.cell
+def _(NOTEBOOK_DIR, Path, load_credentials, mo, os):
+    GOOGLE_TOKEN_FILE = Path(
+        os.environ.get("GDRIVE_TOKEN_FILE", NOTEBOOK_DIR / "gdrive_token.json")
+    )
+    _saved = (
+        GOOGLE_TOKEN_FILE.read_text()
+        if GOOGLE_TOKEN_FILE.exists()
+        else os.environ.get("GDRIVE_TOKEN", "")
+    )
+    saved_credentials = load_credentials(_saved) if _saved else None
+    _clients = sorted(NOTEBOOK_DIR.glob("client_secret*.json"))
+    client_text = (
+        _clients[0].read_text() if _clients else os.environ.get("GDRIVE_CLIENT_SECRET_JSON", "")
+    )
+    client_file = mo.ui.file(filetypes=[".json"], label="client_secret JSON (Google Cloud, Desktop app)")
+    if saved_credentials is not None:
+        _shown = "Google: signed in with the saved token"
+    elif client_text:
+        _shown = "Google: OAuth client found, sign in below"
+    else:
+        _shown = client_file
+    _shown
+    return GOOGLE_TOKEN_FILE, client_file, client_text, saved_credentials
 
-    Leave the box empty when the `HF_TOKEN` environment variable is already set. The repository
-    name defaults to `<your account>/cloudband_treino`.
-    """)
-    return
+
+@app.cell
+def _(
+    client_config_from,
+    client_file,
+    client_text,
+    mo,
+    saved_credentials,
+    start_sign_in,
+):
+    if saved_credentials is not None:
+        sign_in_flow, pasted_box, _shown = None, None, None
+    else:
+        _text = client_text or (client_file.contents() or b"").decode()
+        mo.stop(not _text, "Upload the client_secret JSON above to go on.")
+        sign_in_flow, _url = start_sign_in(client_config_from(_text))
+        pasted_box = mo.ui.text(
+            label="After allowing, paste here the whole address of the page that did not load",
+            full_width=True,
+        )
+        _shown = mo.vstack(
+            [
+                mo.Html(f'<a href="{_url}" target="_blank">1. Open this Google page and allow access to the Drive</a>'),
+                pasted_box,
+            ]
+        )
+    _shown
+    return pasted_box, sign_in_flow
+
+
+@app.cell
+def _(
+    GOOGLE_TOKEN_FILE,
+    drive_service,
+    finish_sign_in,
+    mo,
+    pasted_box,
+    saved_credentials,
+    sign_in_flow,
+):
+    if saved_credentials is not None:
+        google_credentials = saved_credentials
+    else:
+        mo.stop(not pasted_box.value.strip(), "Waiting for the pasted address.")
+        google_credentials = finish_sign_in(sign_in_flow, pasted_box.value)
+        try:
+            GOOGLE_TOKEN_FILE.write_text(google_credentials.to_json())
+            print(f"token saved in {GOOGLE_TOKEN_FILE}; the next session skips the sign-in")
+        except OSError as _error:
+            print(f"token not saved ({_error}); the next session asks for the sign-in again")
+    drive = drive_service(google_credentials)
+    _me = drive.about().get(fields="user(emailAddress)").execute()["user"]["emailAddress"]
+    print(f"Google Drive of {_me}")
+    return (drive,)
 
 
 @app.cell
 def _(mo):
-    token_box = mo.ui.text(kind="password", label="Hugging Face token (Write)", full_width=True)
-    repo_box = mo.ui.text(label="Runs repository (blank: <account>/cloudband_treino)", full_width=True)
-    mo.vstack([token_box, repo_box])
-    return repo_box, token_box
+    hf_token_box = mo.ui.text(kind="password", label="Hugging Face token, type Read (optional)", full_width=True)
+    hf_token_box
+    return (hf_token_box,)
 
 
 @app.cell
-def _(mo, os, repo_box, token_box):
+def _(hf_token_box, os):
     import requests
 
-    _token = token_box.value.strip() or os.environ.get("HF_TOKEN", "").strip()
-    mo.stop(not _token, mo.md("**Paste a Hugging Face token of type Write above to go on.**"))
-
-    _reply = requests.get(
-        "https://huggingface.co/api/whoami-v2",
-        headers={"Authorization": f"Bearer {_token}"},
-        timeout=30,
-    )
-    mo.stop(
-        _reply.status_code != 200,
-        mo.md(f"**Token refused (HTTP {_reply.status_code}).** Check it and paste it again."),
-    )
-    _account = _reply.json()
-    _role = _account.get("auth", {}).get("accessToken", {}).get("role", "?")
-    if _role == "read":
-        print("warning: this is a Read token; the runs repository needs Write")
-    os.environ["HF_TOKEN"] = _token
-    HF_TOKEN = _token
-    HUB_REPO = repo_box.value.strip() or f"{_account['name']}/cloudband_treino"
-    print(f"token accepted for the account {_account.get('name', '?')} (role {_role})")
-    print(f"runs repository: {HUB_REPO}")
-    return HF_TOKEN, HUB_REPO
+    _token = hf_token_box.value.strip() or os.environ.get("HF_TOKEN", "").strip()
+    os.environ.pop("HF_TOKEN", None)
+    if _token:
+        _reply = requests.get(
+            "https://huggingface.co/api/whoami-v2",
+            headers={"Authorization": f"Bearer {_token}"},
+            timeout=30,
+        )
+        if _reply.status_code == 200:
+            os.environ["HF_TOKEN"] = _token
+            print(f"token accepted for the account {_reply.json().get('name', '?')}")
+        else:
+            print(f"token refused (HTTP {_reply.status_code}); going on without it")
+    else:
+        print("no token: requests use the shared anonymous quota")
+    hf_checked = True
+    return (hf_checked,)
 
 
 @app.cell
-def _(HF_TOKEN, HUB_REPO, HubMirror, PROJECT_DIR, RunStore, WORK_DIR, start):
+def _(DriveMirror, PROJECT_DIR, RunStore, WORK_DIR, drive, start):
+    DRIVE_FOLDER = ("cloudband_treino",)
     TRAINING_DIR = WORK_DIR / "cloudband_treino"
     RESULTS_DIR = TRAINING_DIR / "results"
     CHECKPOINT_DIR = TRAINING_DIR / "checkpoints"
 
     session = start(PROJECT_DIR, require_accelerator=True)
 
-    hub = HubMirror(HUB_REPO, TRAINING_DIR, token=HF_TOKEN)
-    print(f"restored {hub.restore()} file(s) from {hub.url}")
-    # every 10 minutes the new checkpoints and epoch states go up to the Hub, so a session
-    # that ends (12 h limit, or 90 min idle) loses at most the epoch in progress
-    hub.start_background(interval_seconds=600)
+    drive_mirror = DriveMirror(drive, TRAINING_DIR, drive_folder=DRIVE_FOLDER)
+    print(f"{drive_mirror.restore()} file(s) restored from {drive_mirror.where}")
+    drive_mirror.start_background(interval_seconds=300)
 
     store = RunStore(
         results_dir=RESULTS_DIR,
@@ -209,12 +269,22 @@ def _(HF_TOKEN, HUB_REPO, HubMirror, PROJECT_DIR, RunStore, WORK_DIR, start):
     # True only when a run is reported "busy" and the session that held it is gone.
     BREAK_LOCKS = False
 
-    print(f"local folder: {TRAINING_DIR}  |  this session: {store.session_id}")
-    return BREAK_LOCKS, RESULTS_DIR, TRAINING_DIR, hub, store
+    print(f"shared folder: {drive_mirror.where}  |  this session: {store.session_id}")
+    return (
+        BREAK_LOCKS,
+        DRIVE_FOLDER,
+        RESULTS_DIR,
+        TRAINING_DIR,
+        drive_mirror,
+        store,
+    )
 
 
 @app.cell
-def _(dataset, pd):
+def _(dataset, hf_checked, pd):
+    assert hf_checked
+
+
     def load_split(remote_source, split):
         table = dataset.load_remote(remote_source)
         differences = dataset.verify_split_sizes(table)
@@ -393,7 +463,7 @@ def _(
                 lambda name=_backbone: build_unet(name), ocm_protocol, (ocm_micro_batch,)
             )
         probe_micro_batch_size(build_swin_upernet, swin_protocol, (swin_micro_batch,))
-        print(f"micro-batch from the runs repository (decided on {_decided['decided_on']}): "
+        print(f"micro-batch from the shared folder (decided on {_decided['decided_on']}): "
               f"OCM {ocm_micro_batch}, Swin {swin_micro_batch}; it fits this GPU")
 
     train_reader = cache.reader("train", train_table)
@@ -446,25 +516,13 @@ def _(
     _columns = ["state", "epochs", "best_val_loss", "session", "note"]
     mo.vstack(
         [
-            mo.md("**Learning-rate search**"),
+            "**Learning-rate search**",
             pd.DataFrame(_report.search).set_index(["model", "lr"])[_columns],
-            mo.md("**Full runs**"),
+            "**Full runs**",
             pd.DataFrame(_report.runs).set_index(["model", "seed"])[_columns + ["lr"]],
         ]
     )
     return (plans,)
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Training
-
-    Runs every learning-rate search and every seed that is not finished yet, resuming from the
-    last saved epoch. The button keeps it from starting by accident (on "run all", or when a
-    cell above runs again).
-    """)
-    return
 
 
 @app.cell
@@ -477,7 +535,7 @@ def _(mo):
 @app.cell
 def _(
     BREAK_LOCKS,
-    hub,
+    drive_mirror,
     mo,
     ocm_dls,
     ocm_protocol,
@@ -488,7 +546,7 @@ def _(
     swin_protocol,
     train_button,
 ):
-    mo.stop(not train_button.value, mo.md("Training waits for the button above."))
+    mo.stop(not train_button.value, "Training waits for the button above.")
 
     _networks = phase2_networks(ocm_protocol, swin_protocol, ocm_dls, swin_dls)
     try:
@@ -496,9 +554,9 @@ def _(
             _networks, store, seeds=ocm_protocol.seeds, break_locks=BREAK_LOCKS
         )
     finally:
-        _pushed = hub.push_all("training stopped")
-        print(f"pushed to {hub.url}: {len(_pushed.uploaded)} file(s), "
-              f"{len(_pushed.deleted)} removed")
+        _pushed = drive_mirror.push_all()
+        print(f"sent to the Drive: {len(_pushed.uploaded)} file(s), "
+              f"{len(_pushed.deleted)} to its trash")
     outcome
     return
 
@@ -656,7 +714,7 @@ def _(
     RESULTS_DIR,
     cached_boa,
     compare_across_seeds,
-    hub,
+    drive_mirror,
     load_ocm,
     load_swin,
     per_scene_boa,
@@ -695,46 +753,52 @@ def _(
                 f"L1C {_primary.median_difference:+.4f}, L2A {_secondary.median_difference:+.4f}"
                 f"  ({'same' if _same_side else 'DIFFERENT'} direction)"
             )
-    _pushed = hub.push_all("per-scene results")
-    print(f"\nresults pushed to {hub.url} ({len(_pushed.uploaded)} new file(s))")
-    return
-
-
-@app.cell(hide_code=True)
-def _(mo):
-    mo.md(r"""
-    ## Maintenance
-
-    Off by default. `CONFIRM_DISCARD` deletes runs trained at another learning rate than their
-    search chose; `CONFIRM_CLEANUP` deletes leftovers. Deleted files also leave the Hub
-    repository on the next push (its history keeps them, so a mistake can be undone there).
-    The Drive tidy of the Colab notebook has no counterpart here.
-    """)
+    _pushed = drive_mirror.push_all()
+    print(f"\nresults sent to the Drive ({len(_pushed.uploaded)} file(s))")
     return
 
 
 @app.cell
 def _(mo):
+    # CONFIRM_DISCARD: delete runs trained at another learning rate than their search chose.
+    # CONFIRM_CLEANUP: delete leftovers in the shared folder.
+    # DRIVE_TIDY "off", "list" or "trash": stale Drive copies left by Colab.
     CONFIRM_DISCARD = False
     CONFIRM_CLEANUP = False
+    DRIVE_TIDY = "off"
+    ACCEPT_PARTIAL_CURVES = False
     maintenance_button = mo.ui.run_button(label="Run maintenance")
     maintenance_button
-    return CONFIRM_CLEANUP, CONFIRM_DISCARD, maintenance_button
+    return (
+        ACCEPT_PARTIAL_CURVES,
+        CONFIRM_CLEANUP,
+        CONFIRM_DISCARD,
+        DRIVE_TIDY,
+        maintenance_button,
+    )
 
 
 @app.cell
 def _(
+    ACCEPT_PARTIAL_CURVES,
     CONFIRM_CLEANUP,
     CONFIRM_DISCARD,
+    DRIVE_FOLDER,
+    DRIVE_TIDY,
     TRAINING_DIR,
-    hub,
+    drive,
+    drive_mirror,
+    drive_tidy,
     maintenance_button,
     mo,
+    ocm_protocol,
     plans,
     status_report,
     store,
+    swin_protocol,
+    tidy_directories,
 ):
-    mo.stop(not maintenance_button.value, mo.md("Maintenance waits for the button above."))
+    mo.stop(not maintenance_button.value, "Maintenance waits for the button above.")
 
     _report = status_report(store, plans)
     _to_discard = [row for row in _report.runs if row["at_other_rate"]]
@@ -771,8 +835,18 @@ def _(
     for _path, _nbytes in store.largest_files(TRAINING_DIR, exclude=_known):
         print(f"{_nbytes / 1e6:9.1f} MB  {_path.relative_to(TRAINING_DIR)}")
 
-    _pushed = hub.push_all("maintenance")
-    print(f"\nHub repository updated: {len(_pushed.uploaded)} sent, {len(_pushed.deleted)} removed")
+    _pushed = drive_mirror.push_all()
+    print(f"\nDrive updated: {len(_pushed.uploaded)} sent, {len(_pushed.deleted)} to its trash")
+
+    drive_tidy.run_tidy(
+        DRIVE_TIDY,
+        store,
+        plans,
+        tidy_directories(DRIVE_FOLDER, ("results", "checkpoints", "results/progress")),
+        (ocm_protocol.run_id, swin_protocol.run_id),
+        service=drive,
+        accept_partial=ACCEPT_PARTIAL_CURVES,
+    )
     return
 
 

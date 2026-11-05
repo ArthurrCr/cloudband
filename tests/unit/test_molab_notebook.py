@@ -19,11 +19,11 @@ def test_the_molab_notebook_is_python_and_a_marimo_app():
     )
 
 
-def test_the_molab_notebook_has_no_colab_only_code():
+def test_the_molab_notebook_has_no_colab_only_code_and_no_markdown_cells():
     text = source()
     assert "google.colab" not in text
     assert "drive.mount(" not in text
-    assert "/content/" not in text
+    assert "mo.md(" not in text
 
 
 def test_training_and_maintenance_only_start_from_a_button():
@@ -32,8 +32,9 @@ def test_training_and_maintenance_only_start_from_a_button():
     assert "mo.stop(not maintenance_button.value" in text
 
 
-def test_the_runs_are_restored_before_the_store_and_pushed_after_training():
+def test_it_uses_the_same_drive_folder_as_colab_and_pushes_after_training():
     text = source()
-    assert text.index("hub.restore()") < text.index("store = RunStore(")
+    assert 'DRIVE_FOLDER = ("cloudband_treino",)' in text
+    assert text.index("drive_mirror.restore()") < text.index("store = RunStore(")
     training = text.index("run_everything(\n")
-    assert text.index("hub.push_all(", training) > training
+    assert text.index("drive_mirror.push_all()", training) > training
