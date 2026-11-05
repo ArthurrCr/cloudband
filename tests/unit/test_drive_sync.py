@@ -264,3 +264,42 @@ def test_settings_written_by_two_sessions_are_both_kept(tmp_path, no_folder_reso
 
     assert first.load_setting("micro_batch") == {"ocm": 8}
     assert first.load_setting("other") == 1
+
+
+class NotAllowed(Exception):
+    class resp:
+        status = 403
+
+
+def test_a_lock_owned_by_another_account_is_released_by_overwriting_it(
+    tmp_path, no_folder_resolution
+):
+    drive = colab_drive()
+    drive["theirs"] = file("run.lock", "prog", b'{"owner": "colab"}')
+    drive["state"] = file("run.state.pt", "prog", b"s" * 100)
+    mirror = FakeDrive(tmp_path / "local", drive)
+
+    def refuse(file_id):
+        raise NotAllowed()
+
+    mirror._trash = refuse
+    mirror.restore()
+    store = DriveRunStore(
+        mirror.local_dir / "results", mirror.local_dir / "checkpoints",
+        tmp_path / "models", mirror=mirror,
+    )
+    assert store.claim("run", sleep=no_wait, break_locks=True)
+    store.release("run")
+    (mirror.local_dir / "results/progress/run.state.pt").unlink()
+    mirror.push_all()
+
+    import json
+    assert json.loads(drive["theirs"]["data"])["heartbeat"] == 0
+    assert store.lock_info("run") is None                 # not brought back here
+    assert "state" in drive                               # kept for its owner
+    assert not (mirror.local_dir / "results/progress/run.state.pt").exists()
+    mirror.pull()
+    assert not (mirror.local_dir / "results/progress/run.state.pt").exists()
+
+    other = session(tmp_path, "other", drive)
+    assert other.claim("run", sleep=no_wait)              # free for everyone
