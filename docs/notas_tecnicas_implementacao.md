@@ -216,7 +216,7 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   BOA agregado por seed (média ± desvio por arquitetura) e correção de Holm para os três experimentos.
 > - **Teste L2A como resultado secundário** (ADR-0023 D5): as mesmas 975 cenas em L2A, reportadas à parte, nunca
 >   somadas ao resultado principal nem tratadas como evidência independente.
-> - **Implementado em 11/11/2026** (`eval/phase2.py`, células de avaliação do notebook): a inferência salva a
+> - **Implementado em 11/11/2026** (`eval/phase2.py`; roda em `notebooks/00_baselines/score_ocm_cloudsen12.ipynb`): a inferência salva a
 >   matriz de confusão de cada patch e experimento, por seed e nível, para regnety e convnext isolados, o ensemble
 >   OCM e o Swin, numa passada só. Delas saem: o BOA do split inteiro por seed (média ± DP), e o Wilcoxon pareado
 >   OCM × Swin **por ROI** (matrizes dos 5 patches somadas) e por patch, ambos com diferença média, intervalo de
@@ -224,6 +224,9 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   nos três experimentos; e, por ROI, cada backbone do OCM sozinha × Swin, para separar o efeito do ensemble.
 >   O BOA por patch do caminho novo coincide com o do pipeline anterior (testado, e conferido no notebook contra
 >   os CSVs antigos).
+>   O mesmo notebook avalia o OmniCloudMask publicado (pacote 1.7.0, modelo 4.0) nos mesmos patches do cache, e ele
+>   entra nas tabelas como referência: OCM retreinado × publicado e Swin × publicado, por ROI. Não faz parte da
+>   comparação controlada, porque foi treinado com outros dados e outra receita.
 
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 

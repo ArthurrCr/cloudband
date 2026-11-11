@@ -167,3 +167,41 @@ def test_counts_survive_a_round_trip_with_ids_that_look_like_numbers(tmp_path):
 def test_an_ensemble_of_unknown_models_is_refused():
     with pytest.raises(ValueError, match="needs models"):
         evaluation.score_models(samples(), models(), {"ocm": ("regnety", "missing")})
+
+
+def test_a_function_predictor_gives_the_counts_of_the_same_model():
+    """The published model is reached through a function; same model, same counts."""
+    from cloudband.train.normalize import dynamic_z_score
+
+    data, members = samples(), models()
+    swin = members["swin"]
+
+    def predict(image):
+        tensor = torch.from_numpy(dynamic_z_score(image.astype(np.float32))).unsqueeze(0)
+        with torch.no_grad():
+            return swin(tensor).argmax(dim=1).numpy()
+
+    through_function = evaluation.score_predictor(data, predict, "swin")
+    through_module = score(data, members).query("model == 'swin'").reset_index(drop=True)
+
+    pd.testing.assert_frame_equal(through_function, through_module)
+
+
+def test_the_published_model_joins_every_seed_and_gets_its_own_comparisons():
+    data = samples()
+    truth = annotation(0)
+    truth[truth == 99] = 0
+    published = evaluation.score_predictor(
+        data, lambda image: truth, "ocm published"
+    )
+    counts_by_seed = evaluation.with_reference({0: score(data), 1: score(data)}, published)
+
+    tables = evaluation.report(counts_by_seed, published="ocm published")
+
+    assert "OCM vs ocm published, per ROI" in tables
+    assert "Swin vs ocm published, per ROI" in tables
+    assert tables["whole split, per seed"].loc[("ocm published", "cloud"), "sd"] == 0.0
+    with pytest.raises(ValueError, match="different patches"):
+        evaluation.with_reference({0: score(data)}, published.iloc[:3])
+    with pytest.raises(ValueError, match="already has"):
+        evaluation.with_reference(counts_by_seed, published)
