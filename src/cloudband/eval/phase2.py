@@ -15,7 +15,7 @@ resamples ROIs, never single patches.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 
 import numpy as np
 import pandas as pd
@@ -66,21 +66,69 @@ def score_models(
                 predicted[name] = mean.argmax(dim=1)
 
         for name, classes in predicted.items():
-            prediction = classes.squeeze(0).cpu().numpy().astype(np.int64)
-            if prediction.shape != sample.annotation.shape:
-                raise ValueError(
-                    f"{name} predicted {prediction.shape} for an annotation of "
-                    f"{sample.annotation.shape}"
-                )
-            confusions = run_experiments(reference, prediction_masks(prediction), annotated)
-            for experiment, confusion in confusions.items():
-                rows.append(
-                    (name, sample.identifier, sample.roi_id, experiment,
-                     confusion.tp, confusion.tn, confusion.fp, confusion.fn)
-                )
+            prediction = classes.squeeze(0).cpu().numpy()
+            rows.extend(_count_rows(name, sample, prediction, reference, annotated))
     if not rows:
         raise ValueError("no samples were scored")
     return pd.DataFrame(rows, columns=list(COLUMNS))
+
+
+def score_predictor(
+    samples: Iterable[Sample],
+    predict: Callable[[np.ndarray], np.ndarray],
+    name: str,
+) -> pd.DataFrame:
+    """Confusion counts of every patch for a model reached through a function.
+
+    For the published OmniCloudMask, whose package takes the raw R-G-NIR stack and
+    returns the class map, so it sees the same patches as the trained models, with
+    its own normalization.
+    """
+    rows = []
+    for sample in samples:
+        reference = labels.label_masks(sample.annotation)
+        annotated = labels.valid_mask(sample.annotation)
+        labels.verify_partition(reference, int(np.count_nonzero(annotated)))
+        prediction = np.asarray(predict(sample.image)).squeeze()
+        rows.extend(_count_rows(name, sample, prediction, reference, annotated))
+    if not rows:
+        raise ValueError("no samples were scored")
+    return pd.DataFrame(rows, columns=list(COLUMNS))
+
+
+def _count_rows(name, sample, prediction, reference, annotated):
+    prediction = prediction.astype(np.int64)
+    if prediction.shape != sample.annotation.shape:
+        raise ValueError(
+            f"{name} predicted {prediction.shape} for an annotation of "
+            f"{sample.annotation.shape}"
+        )
+    confusions = run_experiments(reference, prediction_masks(prediction), annotated)
+    return [
+        (name, sample.identifier, sample.roi_id, experiment,
+         confusion.tp, confusion.tn, confusion.fp, confusion.fn)
+        for experiment, confusion in confusions.items()
+    ]
+
+
+def with_reference(
+    counts_by_seed: Mapping[int, pd.DataFrame], reference: pd.DataFrame
+) -> dict[int, pd.DataFrame]:
+    """Add a model without seeds (the published one) to every seed's counts.
+
+    It must cover exactly the same patches, so a paired comparison never drops or
+    invents one.
+    """
+    names = set(reference["model"])
+    combined = {}
+    for seed, frame in counts_by_seed.items():
+        clash = names & set(frame["model"])
+        if clash:
+            raise ValueError(f"seed {seed} already has models {sorted(clash)}")
+        if set(frame["scene"]) != set(reference["scene"]):
+            raise ValueError(f"seed {seed} and the reference cover different patches")
+        combined[seed] = pd.concat([frame, reference], ignore_index=True)
+    return combined
 
 
 def save_counts(frame: pd.DataFrame, path) -> None:
@@ -228,9 +276,16 @@ def paired_comparison(
     return table
 
 
-def report(counts_by_seed: Mapping[int, pd.DataFrame]) -> dict[str, pd.DataFrame]:
-    """Every table of the comparison, from the counts of each seed."""
-    return {
+def report(
+    counts_by_seed: Mapping[int, pd.DataFrame], published: str | None = None
+) -> dict[str, pd.DataFrame]:
+    """Every table of the comparison, from the counts of each seed.
+
+    With ``published``, the name of the published OmniCloudMask in the counts, both
+    trained models are also compared with it. It was trained on other data and with
+    another recipe, so it is a reference point, not part of the controlled comparison.
+    """
+    tables = {
         "whole split, per seed": seed_table(counts_by_seed),
         "OCM vs Swin, per ROI": paired_comparison(counts_by_seed, "ocm", "swin", "roi"),
         "OCM vs Swin, per patch": paired_comparison(counts_by_seed, "ocm", "swin", "scene"),
@@ -241,6 +296,14 @@ def report(counts_by_seed: Mapping[int, pd.DataFrame]) -> dict[str, pd.DataFrame
             counts_by_seed, "convnext", "swin", "roi"
         ),
     }
+    if published is not None:
+        tables[f"OCM vs {published}, per ROI"] = paired_comparison(
+            counts_by_seed, "ocm", published, "roi"
+        )
+        tables[f"Swin vs {published}, per ROI"] = paired_comparison(
+            counts_by_seed, "swin", published, "roi"
+        )
+    return tables
 
 
 def legacy_check(counts: pd.DataFrame, model: str, legacy: pd.DataFrame) -> float:
