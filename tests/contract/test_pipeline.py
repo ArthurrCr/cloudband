@@ -195,13 +195,17 @@ def test_package_versions_marks_absent() -> None:
     assert package_versions(("definitely_not_installed",)) == {"definitely_not_installed": "absent"}
 
 
-def test_reload_package_clears_only_its_modules() -> None:
+def test_reload_package_clears_only_its_modules(monkeypatch) -> None:
+    import sys
+
     from cloudband.colab.session import reload_package
 
-    sys_modules_before = set(__import__("sys").modules)
-    assert any(name.startswith("cloudband") for name in sys_modules_before)
+    # monkeypatch puts sys.modules back afterwards, so later tests keep using the module
+    # objects they imported, rather than a second copy imported after the reload
+    monkeypatch.setattr(sys, "modules", dict(sys.modules))
+    assert any(name.startswith("cloudband") for name in sys.modules)
     reload_package("cloudband")
-    remaining = {name for name in __import__("sys").modules if name.startswith("cloudband")}
+    remaining = {name for name in sys.modules if name.startswith("cloudband")}
     assert not remaining
 
 
