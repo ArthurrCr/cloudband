@@ -32,12 +32,13 @@ def test_every_code_cell_is_valid_python(path):
 def test_the_l2a_test_is_secondary_and_kept_out_of_the_primary_comparison():
     path = next(p for p in NOTEBOOKS if p.name == "train_phase2_comparison.ipynb")
     cells = dict(code_cells(path))
-    primary = next(s for s in cells.values() if "results = compare_across_seeds" in s)
-    secondary = next(s for s in cells.values() if "results_l2a = compare_across_seeds" in s)
+    primary = next(s for s in cells.values() if 'evaluation.report(counts["test"])' in s)
+    secondary = next(s for s in cells.values() if 'evaluation.report(counts["test_l2a"])' in s)
+    scoring = next(s for s in cells.values() if "evaluation.score_models(" in s)
 
     assert "l2a" not in primary.lower()
-    assert "test_l2a" in secondary
-    assert "_l2a_seed" in secondary          # its own cached files, not the primary ones
+    assert "never pooled" in secondary
+    assert "-counts-{split}-seed{seed}" in scoring   # each level has its own cached file
 
 
 def test_the_hugging_face_token_comes_right_after_the_drive_and_before_any_data():
