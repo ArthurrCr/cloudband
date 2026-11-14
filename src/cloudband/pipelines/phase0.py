@@ -14,6 +14,7 @@ import numpy as np
 import pandas as pd
 from numpy.typing import NDArray
 
+from cloudband.baselines import ocm
 from cloudband.datasets import cloudsen12 as dataset
 from cloudband.eval.confusion import BinaryConfusion
 from cloudband.eval.experiments import EXPERIMENTS
@@ -22,7 +23,7 @@ from cloudband.eval.metrics import (
     producer_accuracy,
     user_accuracy,
 )
-from cloudband.eval.report import as_percentages, to_frame
+from cloudband.eval.report import as_percentages, paper_style_table, to_frame
 from cloudband.pipelines import cloudsen12 as scoring
 from cloudband.provenance.manifest import build_manifest
 
@@ -277,3 +278,82 @@ def save(
     )
     paths["manifest"] = manifest.write(directory / "manifest.json")
     return paths
+
+PUBLISHED_PATCH = {"patch_size": 509, "patch_overlap": 0}
+
+
+def published_model_id(model_version: float) -> str:
+    """Identifier of one published weight set run through the pinned package."""
+    return f"ocm-rgn-published-v{ocm.package_version()}-model{model_version}"
+
+
+def published_config(model_version: float) -> ocm.InferenceConfig:
+    """One 509 pixel patch per CloudSEN12+ sample, so no mosaicking is involved."""
+    return ocm.InferenceConfig(model_version=model_version, **PUBLISHED_PATCH)
+
+
+def version_label(model_version: float) -> str:
+    return f"V{int(model_version)}"
+
+
+def progress_printer(every: int = 25) -> Callable[[int, int], None]:
+    def progress(position: int, total: int) -> None:
+        if position % every == 0 or position == total:
+            print(f"{position}/{total}", flush=True)
+
+    return progress
+
+
+def _cached_csv(path: Path) -> pd.DataFrame | None:
+    return pd.read_csv(path, index_col="experiment") if path.exists() else None
+
+
+def score_published_versions(
+    table: pd.DataFrame,
+    versions: tuple[float, ...],
+    results_dir: Path,
+    package_versions: dict[str, str] | None = None,
+    limit: int | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    log: Callable[[str], None] = print,
+) -> tuple[dict[float, pd.DataFrame], dict[float, pd.DataFrame]]:
+    """Pooled scores and the paper-style table of each published weight set.
+
+    A version already saved under results_dir is loaded instead of run again:
+    inference on fixed weights with a pinned configuration has no random part, so
+    the saved run is what a new one would give.
+    """
+    scores: dict[float, pd.DataFrame] = {}
+    paper_tables: dict[float, pd.DataFrame] = {}
+    for version in versions:
+        model_id = published_model_id(version)
+        directory = Path(results_dir) / model_id / CLOUDSEN12_TEST
+        saved = _cached_csv(directory / "scores.csv"), _cached_csv(directory / "paper_table.csv")
+        if saved[0] is not None and saved[1] is not None:
+            log(f"model_version={version} -> loaded from cache: {model_id}")
+            scores[version], paper_tables[version] = saved
+            continue
+
+        config = published_config(version)
+        log(f"model_version={version} -> running: {model_id}")
+        result = run(
+            table,
+            lambda stack, config=config: ocm.predict_array(stack, config),
+            model_id=model_id,
+            limit=limit,
+            progress=progress,
+        )
+        log(f"  pairable scenes: {result.pairable}")
+        log("  " + describe_comparison(compare_to_reference(result, STUPMASK_CLOUDSEN12)))
+        for name, path in save(
+            result, results_dir, config=config.as_kwargs(), package_versions=package_versions
+        ).items():
+            log(f"  saved {name}: {path}")
+
+        paper_table = paper_style_table(
+            result.per_scene_boa, result.per_scene_pa, result.per_scene_ua, result.pairable
+        )
+        paper_table.to_csv(directory / "paper_table.csv")
+        log(f"  saved paper_table: {directory / 'paper_table.csv'}")
+        scores[version], paper_tables[version] = result.scores, paper_table
+    return scores, paper_tables
