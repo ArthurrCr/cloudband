@@ -147,3 +147,34 @@ def test_the_fast_reader_check_refuses_a_mismatch(monkeypatch):
     wrong = types.SimpleNamespace(image=good.image + 1, annotation=good.annotation)
     with pytest.raises(AssertionError, match="differs from GDAL"):
         phase2_eval.check_fast_reader(lambda t, row: wrong, {"test": table})
+
+
+def test_published_versions_are_scored_at_both_levels_from_the_cache(setting, monkeypatch):
+    from cloudband.eval.plots import plot_version_comparison
+
+    tables = {"test": pd.DataFrame(index=range(20)), "test_l2a": pd.DataFrame(index=range(20))}
+    calls = []
+    monkeypatch.setattr(ocm, "predict_array", lambda stack, config: calls.append(1) or TRUTH)
+    monkeypatch.setattr(phase0.dataset, "iter_samples", lambda *a, **k: pytest.fail("no remote read"))
+
+    def score():
+        return phase2_eval.score_published_versions(
+            setting.cache, tables, (1.0, 4.0), setting.results, log=lambda m: None
+        )
+
+    versions = score()
+    assert list(versions) == ["L1C", "L2A"]
+    assert len(calls) == 2 * 2 * 20
+    for split, dataset_id in phase2_eval.DATASET_IDS.items():
+        assert (setting.results / phase0.published_model_id(4.0) / dataset_id / "paper_table.csv").exists()
+
+    again = score()
+    assert len(calls) == 2 * 2 * 20   # read back, not run again
+    pd.testing.assert_frame_equal(
+        phase2_eval.version_table(again, "scores"), phase2_eval.version_table(versions, "scores"),
+        check_exact=False,
+    )
+    comparison = phase2_eval.version_comparison(versions)
+    assert list(comparison["L1C"].columns) == ["V1", "V4"]
+    figure = plot_version_comparison(comparison, "t")
+    assert [ax.get_title() for ax in figure.axes] == ["clear", "cloud", "shadow"]

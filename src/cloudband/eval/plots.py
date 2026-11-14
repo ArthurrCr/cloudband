@@ -172,12 +172,14 @@ def plot_paired_differences(
         list(range(count))[::-1], [_comparison_label(c) for c in comparisons], color=INK
     )
     if len(tables_by_level) > 1:
-        axes[-1].legend(frameon=False, loc="lower right", labelcolor=INK, fontsize=9)
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, frameon=False, loc="upper right",
+                   ncol=len(tables_by_level), labelcolor=INK, fontsize=9)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
     fig.text(0.01, 0.005, "dot: mean difference per ROI, averaged over seeds  ·  "
              "line: 95% interval resampling ROIs  ·  right of zero favours the first model",
              color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
+    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
     plt.close(fig)
     return fig
 
@@ -324,5 +326,54 @@ def plot_unit_scatter(
              "better  ·  points below the axis range are drawn at its edge",
              color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
+    plt.close(fig)
+    return fig
+
+
+def plot_version_comparison(
+    comparisons: Mapping[str, pd.DataFrame], title: str, metric_label: str = "Median BOA (%)"
+) -> Figure:
+    """One metric of each published model version, per experiment, every level together.
+
+    comparisons maps a level name (L1C, L2A) to a frame with one row per experiment
+    and one column per version, in percent. The first level is drawn filled with its
+    value above the dot, the second hollow with its value below.
+    """
+    levels = list(comparisons)
+    styles = ((INK, INK, 9, "bottom"), (MUTED, "white", -10, "top"))
+    if len(levels) > len(styles):
+        raise ValueError(f"at most {len(styles)} levels")
+    versions = list(next(iter(comparisons.values())).columns)
+    rows = list(range(len(versions)))[::-1]
+    offsets = [0.0] if len(levels) == 1 else [0.14, -0.14]
+
+    fig, axes = plt.subplots(1, 3, figsize=(13, 0.75 * len(versions) + 1.8), sharey=True)
+    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
+        values = [comparisons[level].loc[experiment].astype(float) for level in levels]
+        lowest = min(float(v.min()) for v in values)
+        highest = max(float(v.max()) for v in values)
+        for level, series, offset, (edge, face, shift, align) in zip(
+            levels, values, offsets, styles
+        ):
+            for y, version in zip(rows, versions):
+                value = float(series[version])
+                ax.scatter([value], [y + offset], s=70, color=face, edgecolor=edge,
+                           linewidth=2, zorder=3, label=level if y == rows[0] else None)
+                ax.annotate(f"{value:.2f}", (value, y + offset), xytext=(0, shift),
+                            textcoords="offset points", ha="center", va=align,
+                            fontsize=8.5, color=edge)
+        pad = max(0.3, 0.15 * (highest - lowest))
+        ax.set_xlim(lowest - pad, highest + pad)
+        ax.set_ylim(-0.7, len(versions) - 0.3)
+        ax.set_title(experiment, color=INK, fontsize=11)
+        ax.set_xlabel(metric_label, color=MUTED)
+        _quiet(ax)
+    axes[0].set_yticks(rows, versions, color=INK)
+    if len(levels) > 1:
+        handles, labels = axes[0].get_legend_handles_labels()
+        fig.legend(handles, labels, frameon=False, loc="upper right", ncol=len(levels),
+                   labelcolor=INK, fontsize=9)
+    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     plt.close(fig)
     return fig
