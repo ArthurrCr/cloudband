@@ -205,3 +205,14 @@ def test_the_published_model_joins_every_seed_and_gets_its_own_comparisons():
         evaluation.with_reference({0: score(data)}, published.iloc[:3])
     with pytest.raises(ValueError, match="already has"):
         evaluation.with_reference(counts_by_seed, published)
+
+
+def test_unit_differences_give_the_mean_difference_of_the_paired_table():
+    counts_by_seed = {0: score(), 1: score(samples(), models(truth_seed=1))}
+    differences = evaluation.unit_differences(counts_by_seed, "ocm", "swin", "roi")
+    table = evaluation.paired_comparison(counts_by_seed, "ocm", "swin", "roi")
+
+    for experiment in ("clear", "cloud", "shadow"):
+        assert differences[experiment].dropna().mean() == pytest.approx(
+            table.loc[experiment, "mean diff"]
+        )

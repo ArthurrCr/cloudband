@@ -73,3 +73,13 @@ def test_the_phase2_evaluation_sits_beside_the_published_omnicloudmask():
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
 def test_notebooks_leave_the_test_suite_to_the_repository(path):
     assert "pytest" not in "\n".join(source for _, source in code_cells(path))
+
+
+def test_the_evaluation_draws_the_phase2_figures_after_the_tables():
+    sources = [source for _, source in code_cells(
+        next(p for p in NOTEBOOKS if p.name == EVALUATION)
+    )]
+    tables = next(i for i, s in enumerate(sources) if 'with_reference(counts["test_l2a"]' in s)
+    figures = next(i for i, s in enumerate(sources) if "plot_paired_differences(" in s)
+    assert figures > tables
+    assert "plot_seed_boa(" in sources[figures] and "plot_unit_differences(" in sources[figures]
