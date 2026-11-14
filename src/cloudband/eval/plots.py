@@ -219,3 +219,110 @@ def plot_unit_differences(
     fig.tight_layout(rect=(0, 0.04, 1, 1))
     plt.close(fig)
     return fig
+
+
+def plot_mean_vs_published(
+    seed_tables: Mapping[str, pd.DataFrame],
+    models: Sequence[str],
+    published: str,
+    title: str,
+) -> Figure:
+    """Mean BOA of the seeds ± one SD per trained model, the published model as a line.
+
+    seed_tables maps a level name (L1C, L2A) to evaluation.seed_table's output; each
+    level is one row of panels, each experiment one column. The value next to each
+    dot is its distance to the published model, in BOA points.
+    """
+    levels = list(seed_tables)
+    fig, axes = plt.subplots(
+        len(levels), 3, figsize=(13, (0.55 * len(models) + 1.3) * len(levels) + 0.6),
+        sharey=True, squeeze=False,
+    )
+    rows = list(range(len(models)))[::-1]
+    for row_axes, level in zip(axes, levels):
+        table = seed_tables[level]
+        for ax, experiment in zip(row_axes, EXPERIMENT_ORDER):
+            reference = float(table.loc[(published, experiment), "mean"]) * 100
+            lowest = highest = reference
+            for y, model in zip(rows, models):
+                mean = float(table.loc[(model, experiment), "mean"]) * 100
+                sd = float(table.loc[(model, experiment), "sd"]) * 100
+                sd = 0.0 if np.isnan(sd) else sd
+                color = _model_color(model)
+                ax.plot([mean - sd, mean + sd], [y, y], color=color, linewidth=2.5,
+                        solid_capstyle="round", zorder=2)
+                ax.scatter([mean], [y], s=80, color=color, edgecolor="white", linewidth=2,
+                           zorder=3)
+                ax.annotate(f"{mean - reference:+.2f}", (mean, y), xytext=(0, 9),
+                            textcoords="offset points", ha="center", fontsize=8.5, color=INK)
+                lowest, highest = min(lowest, mean - sd), max(highest, mean + sd)
+            ax.axvline(reference, color=REFERENCE, linewidth=1.5, linestyle=(0, (4, 3)),
+                       zorder=1)
+            ax.annotate(f"published {reference:.2f}", (reference, len(models) - 0.45),
+                        xytext=(4, 0), textcoords="offset points", fontsize=8.5,
+                        color=MUTED, va="center")
+            pad = max(0.15, 0.12 * (highest - lowest))
+            ax.set_xlim(lowest - pad, highest + pad * 2.2)
+            ax.set_ylim(-0.6, len(models) - 0.2)
+            ax.set_title(f"{experiment}, {level}", color=INK, fontsize=11)
+            _quiet(ax)
+        row_axes[0].set_yticks(rows, list(models), color=INK)
+    for ax in axes[-1]:
+        ax.set_xlabel("BOA (%)", color=MUTED)
+    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
+    fig.text(0.01, 0.005, "dot: mean of the seeds  ·  line: ± one SD across seeds  ·  "
+             "dashed: published model  ·  number: difference to it, in BOA points",
+             color=MUTED, fontsize=8.5)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    plt.close(fig)
+    return fig
+
+
+def plot_unit_scatter(
+    trained: Mapping[str, pd.DataFrame],
+    reference: pd.DataFrame,
+    reference_label: str,
+    title: str,
+    unit: str = "ROIs",
+) -> Figure:
+    """BOA per unit of each trained model (y) against the reference model (x).
+
+    One row of panels per trained model, one column per experiment. A point above
+    the diagonal is a unit where the trained model does better.
+    """
+    names = list(trained)
+    fig, axes = plt.subplots(len(names), 3, figsize=(13, 4.3 * len(names)), squeeze=False)
+    for row_axes, name in zip(axes, names):
+        color = _model_color(name.lower())
+        for ax, experiment in zip(row_axes, EXPERIMENT_ORDER):
+            joined = pd.DataFrame(
+                {"x": reference[experiment], "y": trained[name][experiment]}
+            ).dropna() * 100
+            low = float(min(joined["x"].quantile(0.01), joined["y"].quantile(0.01)))
+            low = max(0.0, low - 2)
+            ax.plot([low, 100], [low, 100], color=MUTED, linewidth=1, zorder=1)
+            ax.scatter(joined["x"].clip(lower=low), joined["y"].clip(lower=low), s=16,
+                       color=color, alpha=0.55, linewidth=0, zorder=2)
+            above = float((joined["y"] > joined["x"]).mean()) * 100
+            ax.text(0.03, 0.97, f"{name} better in {above:.0f}% of {len(joined)} {unit}",
+                    transform=ax.transAxes, ha="left", va="top", fontsize=9, color=INK)
+            ax.set_xlim(low, 100.5)
+            ax.set_ylim(low, 100.5)
+            ax.set_aspect("equal")
+            ax.set_title(experiment, color=INK, fontsize=11)
+            ax.set_xlabel(f"{reference_label} BOA (%)", color=MUTED)
+            ax.set_ylabel(f"{name} BOA (%)", color=MUTED)
+            for spine in ("top", "right"):
+                ax.spines[spine].set_visible(False)
+            for spine in ("left", "bottom"):
+                ax.spines[spine].set_color(MUTED)
+            ax.tick_params(colors=MUTED, length=0)
+            ax.grid(color=GRID, linewidth=0.8)
+            ax.set_axisbelow(True)
+    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
+    fig.text(0.01, 0.005, "one point per ROI  ·  above the diagonal: the trained model does "
+             "better  ·  points below the axis range are drawn at its edge",
+             color=MUTED, fontsize=8.5)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
+    plt.close(fig)
+    return fig

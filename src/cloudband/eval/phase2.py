@@ -290,8 +290,8 @@ def report(
 ) -> dict[str, pd.DataFrame]:
     """Every table of the comparison, from the counts of each seed.
 
-    With ``published``, the name of the published OmniCloudMask in the counts, both
-    trained models are also compared with it. It was trained on other data and with
+    With ``published``, the name of the published OmniCloudMask in the counts, every
+    trained model (the OCM ensemble, each of its backbones, Swin) is also compared with it. It was trained on other data and with
     another recipe, so it is a reference point, not part of the controlled comparison.
     """
     tables = {
@@ -306,12 +306,13 @@ def report(
         ),
     }
     if published is not None:
-        tables[f"OCM vs {published}, per ROI"] = paired_comparison(
-            counts_by_seed, "ocm", published, "roi"
-        )
-        tables[f"Swin vs {published}, per ROI"] = paired_comparison(
-            counts_by_seed, "swin", published, "roi"
-        )
+        for model, name in (
+            ("ocm", "OCM"), ("regnety", "regnety alone"), ("convnext", "convnext alone"),
+            ("swin", "Swin"),
+        ):
+            tables[f"{name} vs {published}, per ROI"] = paired_comparison(
+                counts_by_seed, model, published, "roi"
+            )
     return tables
 
 
