@@ -99,27 +99,34 @@ def test_phase2_figures_have_one_panel_per_experiment():
     import numpy as np
 
     from cloudband.eval.plots import (
+        plot_all_models,
         plot_paired_differences,
-        plot_seed_boa,
         plot_unit_differences,
+        plot_versus_references,
     )
 
     experiments = ["clear", "cloud", "shadow"]
     index = pd.MultiIndex.from_product(
-        [["ocm", "swin", "ocm published"], experiments], names=["model", "experiment"]
+        [["ocm", "swin", "ocm published 4.0"], experiments], names=["model", "experiment"]
     )
     seeds = pd.DataFrame(np.full((9, 2), 0.93), index=index, columns=["seed 0", "seed 1"])
-    seeds.insert(0, "mean", 0.93)
+    seeds.loc[("ocm", "cloud"), "seed 1"] = 0.94
+    seeds.insert(0, "mean", seeds.mean(axis=1))
     comparison = pd.DataFrame(
         {"mean diff": 0.004, "ci95 low": 0.002, "ci95 high": 0.006}, index=experiments
     )
-    report = {"OCM vs Swin, per ROI": comparison}
+    report = {
+        "OCM vs Swin, per ROI": comparison,
+        "OCM vs ref, per ROI": comparison,
+        "Swin vs ref, per ROI": -comparison,
+    }
     differences = pd.DataFrame(np.random.default_rng(0).normal(0.004, 0.01, (40, 3)),
                                columns=experiments)
 
     for figure in (
-        plot_seed_boa(seeds, "t"),
-        plot_paired_differences({"L1C": report, "L2A": report}, list(report), "t"),
+        plot_all_models(seeds, [["ocm published 4.0"], ["ocm", "swin"]], {}, "t"),
+        plot_paired_differences({"L1C": report, "L2A": report}, ["OCM vs Swin, per ROI"], "t"),
+        plot_versus_references(report, {"OCM": "OCM", "Swin": "Swin"}, ["ref"], {}, "t"),
         plot_unit_differences(differences, "OCM", "Swin", "t"),
     ):
         assert [ax.get_title() for ax in figure.axes] == experiments

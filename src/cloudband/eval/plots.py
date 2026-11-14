@@ -13,6 +13,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from matplotlib.figure import Figure
+from matplotlib.ticker import MaxNLocator
 
 
 def plot_experiment_comparison(
@@ -58,7 +59,6 @@ REFERENCE = "#8a8984"
 GRID = "#e4e3df"
 OCM_COLOR = "#2a78d6"
 SWIN_COLOR = "#eb6834"
-PHASE2_MODELS = ("regnety", "convnext", "ocm", "swin", "ocm published")
 EXPERIMENT_ORDER = ("clear", "cloud", "shadow")
 
 
@@ -77,52 +77,8 @@ def _quiet(ax, axis: str = "x") -> None:
     ax.tick_params(colors=MUTED, length=0)
     ax.grid(axis=axis, color=GRID, linewidth=0.8)
     ax.set_axisbelow(True)
-
-
-def plot_seed_boa(seed_table: pd.DataFrame, title: str) -> Figure:
-    """Whole-split BOA per model: each seed as a small dot, the seed mean labelled.
-
-    seed_table is evaluation.seed_table's output, indexed by (model, experiment), with
-    a "mean" column and one "seed N" column per seed. A model without seeds (the
-    published one) has the same value in every seed column and is drawn as one diamond.
-    """
-    models = [m for m in PHASE2_MODELS if m in seed_table.index.get_level_values(0)]
-    models += sorted(set(seed_table.index.get_level_values(0)) - set(models))
-    seed_columns = [c for c in seed_table.columns if c.startswith("seed ")]
-    rows = list(range(len(models)))[::-1]
-
-    fig, axes = plt.subplots(1, 3, figsize=(13, 0.55 * len(models) + 1.6), sharey=True)
-    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
-        lowest, highest = 100.0, 0.0
-        for y, model in zip(rows, models):
-            values = seed_table.loc[(model, experiment), seed_columns].to_numpy(float) * 100
-            mean = float(seed_table.loc[(model, experiment), "mean"]) * 100
-            color = _model_color(model)
-            lowest, highest = min(lowest, values.min()), max(highest, values.max())
-            if "published" in model:
-                ax.scatter([mean], [y], marker="D", s=70, facecolor="white",
-                           edgecolor=color, linewidth=2, zorder=3)
-            else:
-                ax.scatter(values, [y] * len(values), s=22, color=color, alpha=0.45,
-                           linewidth=0, zorder=2)
-                ax.scatter([mean], [y], s=90, color=color, edgecolor="white",
-                           linewidth=2, zorder=3)
-            ax.annotate(f"{mean:.2f}", (mean, y), xytext=(0, 9), textcoords="offset points",
-                        ha="center", fontsize=8.5, color=INK)
-        pad = max(0.15, 0.08 * (highest - lowest))
-        ax.set_xlim(lowest - pad, highest + pad)
-        ax.set_ylim(-0.7, len(models) - 0.3)
-        ax.set_title(experiment, color=INK, fontsize=11)
-        ax.set_xlabel("BOA (%)", color=MUTED)
-        _quiet(ax)
-    axes[0].set_yticks(rows, models, color=INK)
-    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, "small dots: seeds  ·  large dot: seed mean  ·  "
-             "hollow diamond: published OmniCloudMask (no seeds)",
-             color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
-    plt.close(fig)
-    return fig
+    if axis == "x":
+        ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
 
 
 def _comparison_label(title: str) -> str:
@@ -134,6 +90,7 @@ def plot_paired_differences(
     tables_by_level: Mapping[str, Mapping[str, pd.DataFrame]],
     comparisons: Sequence[str],
     title: str,
+    labels: Mapping[str, str] | None = None,
 ) -> Figure:
     """Mean paired difference and its 95% interval, in BOA points, per comparison.
 
@@ -164,12 +121,18 @@ def plot_paired_differences(
                         solid_capstyle="round", zorder=2)
                 ax.scatter([mean], [y], marker=marker, s=60, color=face, edgecolor=edge,
                            linewidth=2, zorder=3, label=level if row == 0 else None)
+                ax.annotate(f"{mean:+.2f}", (high, y), xytext=(6, 0), textcoords="offset points",
+                            va="center", fontsize=8, color=edge)
+        low, high = ax.get_xlim()
+        ax.set_xlim(low, high + 0.15 * (high - low))
         ax.set_title(experiment, color=INK, fontsize=11)
         ax.set_xlabel("difference in BOA (points)", color=MUTED)
         ax.set_ylim(-0.6, count - 0.4)
         _quiet(ax)
     axes[0].set_yticks(
-        list(range(count))[::-1], [_comparison_label(c) for c in comparisons], color=INK
+        list(range(count))[::-1],
+        [(labels or {}).get(c, _comparison_label(c)) for c in comparisons],
+        color=INK,
     )
     if len(tables_by_level) > 1:
         handles, labels = axes[0].get_legend_handles_labels()
@@ -219,63 +182,6 @@ def plot_unit_differences(
              "values past the edges are counted in the outermost bars",
              color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.04, 1, 1))
-    plt.close(fig)
-    return fig
-
-
-def plot_mean_vs_published(
-    seed_tables: Mapping[str, pd.DataFrame],
-    models: Sequence[str],
-    published: str,
-    title: str,
-) -> Figure:
-    """Mean BOA of the seeds ± one SD per trained model, the published model as a line.
-
-    seed_tables maps a level name (L1C, L2A) to evaluation.seed_table's output; each
-    level is one row of panels, each experiment one column. The value next to each
-    dot is its distance to the published model, in BOA points.
-    """
-    levels = list(seed_tables)
-    fig, axes = plt.subplots(
-        len(levels), 3, figsize=(13, (0.55 * len(models) + 1.3) * len(levels) + 0.6),
-        sharey=True, squeeze=False,
-    )
-    rows = list(range(len(models)))[::-1]
-    for row_axes, level in zip(axes, levels):
-        table = seed_tables[level]
-        for ax, experiment in zip(row_axes, EXPERIMENT_ORDER):
-            reference = float(table.loc[(published, experiment), "mean"]) * 100
-            lowest = highest = reference
-            for y, model in zip(rows, models):
-                mean = float(table.loc[(model, experiment), "mean"]) * 100
-                sd = float(table.loc[(model, experiment), "sd"]) * 100
-                sd = 0.0 if np.isnan(sd) else sd
-                color = _model_color(model)
-                ax.plot([mean - sd, mean + sd], [y, y], color=color, linewidth=2.5,
-                        solid_capstyle="round", zorder=2)
-                ax.scatter([mean], [y], s=80, color=color, edgecolor="white", linewidth=2,
-                           zorder=3)
-                ax.annotate(f"{mean - reference:+.2f}", (mean, y), xytext=(0, 9),
-                            textcoords="offset points", ha="center", fontsize=8.5, color=INK)
-                lowest, highest = min(lowest, mean - sd), max(highest, mean + sd)
-            ax.axvline(reference, color=REFERENCE, linewidth=1.5, linestyle=(0, (4, 3)),
-                       zorder=1)
-            ax.annotate(f"published {reference:.2f}", (reference, len(models) - 0.45),
-                        xytext=(4, 0), textcoords="offset points", fontsize=8.5,
-                        color=MUTED, va="center")
-            pad = max(0.15, 0.12 * (highest - lowest))
-            ax.set_xlim(lowest - pad, highest + pad * 2.2)
-            ax.set_ylim(-0.6, len(models) - 0.2)
-            ax.set_title(f"{experiment}, {level}", color=INK, fontsize=11)
-            _quiet(ax)
-        row_axes[0].set_yticks(rows, list(models), color=INK)
-    for ax in axes[-1]:
-        ax.set_xlabel("BOA (%)", color=MUTED)
-    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, "dot: mean of the seeds  ·  line: ± one SD across seeds  ·  "
-             "dashed: published model  ·  number: difference to it, in BOA points",
-             color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
     plt.close(fig)
     return fig
 
@@ -330,50 +236,121 @@ def plot_unit_scatter(
     return fig
 
 
-def plot_version_comparison(
-    comparisons: Mapping[str, pd.DataFrame], title: str, metric_label: str = "Median BOA (%)"
+def plot_all_models(
+    seed_table: pd.DataFrame,
+    groups: Sequence[Sequence[str]],
+    labels: Mapping[str, str],
+    title: str,
 ) -> Figure:
-    """One metric of each published model version, per experiment, every level together.
+    """Whole-split BOA of every model on one axis per experiment.
 
-    comparisons maps a level name (L1C, L2A) to a frame with one row per experiment
-    and one column per version, in percent. The first level is drawn filled with its
-    value above the dot, the second hollow with its value below.
+    seed_table is evaluation.seed_table's output, indexed by (model, experiment).
+    groups lists the models top to bottom in blocks (the published versions, then the
+    trained models), separated by a rule. A model with seeds shows each seed as a
+    small dot and the mean as a large one; a model without seeds (a published
+    version) is one diamond. Every point is named on the axis, and its value is
+    written next to it.
     """
-    levels = list(comparisons)
-    styles = ((INK, INK, 9, "bottom"), (MUTED, "white", -10, "top"))
-    if len(levels) > len(styles):
-        raise ValueError(f"at most {len(styles)} levels")
-    versions = list(next(iter(comparisons.values())).columns)
-    rows = list(range(len(versions)))[::-1]
-    offsets = [0.0] if len(levels) == 1 else [0.14, -0.14]
+    order = [model for group in groups for model in group]
+    rows, y, rules = {}, 0.0, []
+    for number, group in enumerate(groups):
+        if number:
+            rules.append(y + 0.25)
+            y += 0.5
+        for model in group:
+            rows[model] = y
+            y += 1
+    top = y - 1
+    seed_columns = [c for c in seed_table.columns if c.startswith("seed ")]
 
-    fig, axes = plt.subplots(1, 3, figsize=(13, 0.75 * len(versions) + 1.8), sharey=True)
+    fig, axes = plt.subplots(1, 3, figsize=(14, 0.48 * y + 1.6), sharey=True)
     for ax, experiment in zip(axes, EXPERIMENT_ORDER):
-        values = [comparisons[level].loc[experiment].astype(float) for level in levels]
-        lowest = min(float(v.min()) for v in values)
-        highest = max(float(v.max()) for v in values)
-        for level, series, offset, (edge, face, shift, align) in zip(
-            levels, values, offsets, styles
-        ):
-            for y, version in zip(rows, versions):
-                value = float(series[version])
-                ax.scatter([value], [y + offset], s=70, color=face, edgecolor=edge,
-                           linewidth=2, zorder=3, label=level if y == rows[0] else None)
-                ax.annotate(f"{value:.2f}", (value, y + offset), xytext=(0, shift),
-                            textcoords="offset points", ha="center", va=align,
-                            fontsize=8.5, color=edge)
-        pad = max(0.3, 0.15 * (highest - lowest))
-        ax.set_xlim(lowest - pad, highest + pad)
-        ax.set_ylim(-0.7, len(versions) - 0.3)
+        means = [float(seed_table.loc[(m, experiment), "mean"]) * 100 for m in order]
+        spread = [seed_table.loc[(m, experiment), seed_columns].to_numpy(float) * 100 for m in order]
+        lowest = min(min(v.min() for v in spread), min(means))
+        highest = max(max(v.max() for v in spread), max(means))
+        for model, mean, values in zip(order, means, spread):
+            row = top - rows[model]
+            color = _model_color(model)
+            if np.ptp(values) == 0:
+                ax.scatter([mean], [row], marker="D", s=60, color=REFERENCE, edgecolor="white",
+                           linewidth=1.5, zorder=3)
+            else:
+                ax.scatter(values, [row] * len(values), s=18, color=color, alpha=0.45,
+                           linewidth=0, zorder=2)
+                ax.scatter([mean], [row], s=80, color=color, edgecolor="white", linewidth=2,
+                           zorder=3)
+            ax.annotate(f"{mean:.2f}", (max(mean, values.max()), row), xytext=(8, 0),
+                        textcoords="offset points", va="center", fontsize=8.5, color=INK)
+        for rule in rules:
+            ax.axhline(top - rule, color=GRID, linewidth=1.2)
+        pad = max(0.2, 0.1 * (highest - lowest))
+        ax.set_xlim(lowest - pad, highest + pad * 3)
+        ax.set_ylim(-0.6, top + 0.6)
         ax.set_title(experiment, color=INK, fontsize=11)
-        ax.set_xlabel(metric_label, color=MUTED)
+        ax.set_xlabel("BOA (%)", color=MUTED)
         _quiet(ax)
-    axes[0].set_yticks(rows, versions, color=INK)
-    if len(levels) > 1:
-        handles, labels = axes[0].get_legend_handles_labels()
-        fig.legend(handles, labels, frameon=False, loc="upper right", ncol=len(levels),
-                   labelcolor=INK, fontsize=9)
+    axes[0].set_yticks([top - rows[m] for m in order], [labels.get(m, m) for m in order],
+                       color=INK)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.tight_layout(rect=(0, 0, 1, 0.97))
+    fig.text(0.01, 0.005, "gray diamond: published model (no seeds)  ·  small dots: the seeds of "
+             "a trained model  ·  large dot and number: their mean",
+             color=MUTED, fontsize=8.5)
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     plt.close(fig)
     return fig
+
+
+def plot_versus_references(
+    tables: Mapping[str, pd.DataFrame],
+    models: Mapping[str, str],
+    references: Sequence[str],
+    labels: Mapping[str, str],
+    title: str,
+) -> Figure:
+    """Each trained model minus each reference model, per unit, with its 95% interval.
+
+    tables is one level's evaluation.report output, holding "{model} vs {reference},
+    per ROI" for every key of models and every reference. One row per reference; the
+    trained models are drawn side by side in each row, in their own colours, with the
+    difference written next to the dot.
+    """
+    names = list(models)
+    offsets = [0.0] if len(names) == 1 else [
+        0.18 - 0.36 * i / (len(names) - 1) for i in range(len(names))
+    ]
+    rows = list(range(len(references)))[::-1]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 0.95 * len(references) + 1.9), sharey=True)
+    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
+        ax.axvline(0, color=MUTED, linewidth=1, zorder=1)
+        for name, offset in zip(names, offsets):
+            color = _model_color(name.lower())
+            for y, reference in zip(rows, references):
+                line = tables[f"{name} vs {reference}, per ROI"].loc[experiment]
+                mean = line["mean diff"] * 100
+                low, high = line["ci95 low"] * 100, line["ci95 high"] * 100
+                ax.plot([low, high], [y + offset] * 2, color=color, linewidth=2.5,
+                        solid_capstyle="round", zorder=2)
+                ax.scatter([mean], [y + offset], s=60, color=color, edgecolor="white",
+                           linewidth=1.5, zorder=3, label=models[name] if y == rows[0] else None)
+                ax.annotate(f"{mean:+.2f}", (high, y + offset), xytext=(6, 0),
+                            textcoords="offset points", va="center", fontsize=8, color=INK)
+        low, high = ax.get_xlim()
+        ax.set_xlim(low, high + 0.18 * (high - low))
+        ax.set_ylim(-0.6, len(references) - 0.4)
+        ax.set_title(experiment, color=INK, fontsize=11)
+        ax.set_xlabel("difference in BOA (points)", color=MUTED)
+        _quiet(ax)
+    axes[0].set_yticks(rows, [f"vs {labels.get(r, r)}" for r in references], color=INK)
+    handles, legend = axes[0].get_legend_handles_labels()
+    fig.legend(handles, legend, frameon=False, loc="upper right", ncol=len(names),
+               labelcolor=INK, fontsize=9)
+    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
+    fig.text(0.01, 0.005, "dot: mean difference per ROI, averaged over seeds  ·  line: 95% "
+             "interval resampling ROIs  ·  right of zero: the trained model does better",
+             color=MUTED, fontsize=8.5)
+    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    plt.close(fig)
+    return fig
+
