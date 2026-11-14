@@ -42,6 +42,9 @@ ENSEMBLES = {"ocm": ("regnety", "convnext")}
 # primary result; L2A is the same scenes, reported apart as a robustness check.
 LEVELS = {"test": "L1C", "test_l2a": "L2A"}
 
+# Where phase 0 saves the published versions of each level.
+DATASET_IDS = {"test": phase0.CLOUDSEN12_TEST, "test_l2a": phase0.CLOUDSEN12_TEST_L2A}
+
 VERSUS_SWIN = (
     "OCM vs Swin, per ROI",
     "regnety alone vs Swin, per ROI",
@@ -152,6 +155,64 @@ def build_test_cache(
     for split, table in tables.items():
         cache.build(split, table, read_sample=reader, workers=workers, bands_selected=True)
     return cache
+
+
+def score_published_versions(
+    cache: LocalCache,
+    tables: Mapping[str, pd.DataFrame],
+    versions: tuple[float, ...],
+    baseline_dir: Path,
+    package_versions: dict[str, str] | None = None,
+    progress: Callable[[int, int], None] | None = None,
+    log: Log = print,
+) -> dict[str, dict[str, dict[float, pd.DataFrame]]]:
+    """Every published weight set at each level, read from the cache when not saved.
+
+    Returns, per level name (L1C, L2A), the pooled "scores" and the paper-style
+    "paper" table of each version.
+    """
+    results = {}
+    for split, table in tables.items():
+        log(f"--- {LEVELS[split]} ---")
+        scores, paper = phase0.score_published_versions(
+            table,
+            versions,
+            baseline_dir,
+            package_versions=package_versions,
+            progress=progress,
+            log=log,
+            dataset_id=DATASET_IDS[split],
+            samples=lambda split=split, table=table: cache.samples(split, table),
+        )
+        results[LEVELS[split]] = {"scores": scores, "paper": paper}
+    return results
+
+
+def version_table(
+    versions: Mapping[str, Mapping[str, Mapping[float, pd.DataFrame]]], kind: str
+) -> pd.DataFrame:
+    """One table of every level and version: kind is "scores" (pooled) or "paper"."""
+    return pd.concat(
+        {
+            (level, phase0.version_label(version)): frame
+            for level, tables in versions.items()
+            for version, frame in tables[kind].items()
+        },
+        names=["level", "version", "experiment"],
+    )
+
+
+def version_comparison(
+    versions: Mapping[str, Mapping[str, Mapping[float, pd.DataFrame]]],
+    column: str = "median_boa",
+) -> dict[str, pd.DataFrame]:
+    """Per level, one row per experiment and one column per version, of one metric."""
+    return {
+        level: pd.DataFrame(
+            {phase0.version_label(v): frame[column] for v, frame in tables["paper"].items()}
+        )
+        for level, tables in versions.items()
+    }
 
 
 def score_published(

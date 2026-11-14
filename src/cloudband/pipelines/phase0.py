@@ -6,7 +6,8 @@ belongs in the notebook itself.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterable, Iterator
+from itertools import islice
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -62,6 +63,7 @@ class Reference:
 
 
 CLOUDSEN12_TEST = "cloudsen12plus_test_p509_high"
+CLOUDSEN12_TEST_L2A = "cloudsen12plus_test_l2a_p509_high"
 PIXBOX_S2 = "pixbox_s2"
 PIXBOX_L8 = "pixbox_l8"
 
@@ -154,18 +156,27 @@ def run(
     dataset_id: str = CLOUDSEN12_TEST,
     limit: int | None = None,
     progress: Callable[[int, int], None] | None = None,
+    samples: Iterable[dataset.Sample] | None = None,
 ) -> RunResult:
-    """Score every scene in the table and assemble the run result."""
-    predictor = build_predictor(predict)
+    """Score every scene in the table and assemble the run result.
+
+    The patches are read from the remote file, all thirteen bands, unless samples
+    are given: those come from the local cache with red, green and NIR already
+    selected, in the table's order.
+    """
+    predictor = predict if samples is not None else build_predictor(predict)
+    source = (
+        dataset.iter_samples(table, limit=limit) if samples is None else islice(samples, limit)
+    )
     total = len(table) if limit is None else min(limit, len(table))
 
-    def samples() -> Iterator[dataset.Sample]:
-        for position, sample in enumerate(dataset.iter_samples(table, limit=limit), start=1):
+    def counted() -> Iterator[dataset.Sample]:
+        for position, sample in enumerate(source, start=1):
             if progress is not None:
                 progress(position, total)
             yield sample
 
-    per_scene = scoring.score_split(samples(), predictor)
+    per_scene = scoring.score_split(counted(), predictor)
     pooled = scoring.pooled(per_scene)
     per_scene_boa = scoring.per_scene_metric(per_scene, balanced_overall_accuracy)
     per_scene_pa = scoring.per_scene_metric(per_scene, producer_accuracy)
@@ -316,18 +327,21 @@ def score_published_versions(
     limit: int | None = None,
     progress: Callable[[int, int], None] | None = None,
     log: Callable[[str], None] = print,
+    dataset_id: str = CLOUDSEN12_TEST,
+    samples: Callable[[], Iterable[dataset.Sample]] | None = None,
 ) -> tuple[dict[float, pd.DataFrame], dict[float, pd.DataFrame]]:
     """Pooled scores and the paper-style table of each published weight set.
 
     A version already saved under results_dir is loaded instead of run again:
     inference on fixed weights with a pinned configuration has no random part, so
-    the saved run is what a new one would give.
+    the saved run is what a new one would give. samples, when given, returns a fresh
+    iterator of cached patches (bands selected) for each version run.
     """
     scores: dict[float, pd.DataFrame] = {}
     paper_tables: dict[float, pd.DataFrame] = {}
     for version in versions:
         model_id = published_model_id(version)
-        directory = Path(results_dir) / model_id / CLOUDSEN12_TEST
+        directory = Path(results_dir) / model_id / dataset_id
         saved = _cached_csv(directory / "scores.csv"), _cached_csv(directory / "paper_table.csv")
         if saved[0] is not None and saved[1] is not None:
             log(f"model_version={version} -> loaded from cache: {model_id}")
@@ -340,8 +354,10 @@ def score_published_versions(
             table,
             lambda stack, config=config: ocm.predict_array(stack, config),
             model_id=model_id,
+            dataset_id=dataset_id,
             limit=limit,
             progress=progress,
+            samples=None if samples is None else samples(),
         )
         log(f"  pairable scenes: {result.pairable}")
         log("  " + describe_comparison(compare_to_reference(result, STUPMASK_CLOUDSEN12)))

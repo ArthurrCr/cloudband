@@ -50,8 +50,8 @@ def test_the_evaluation_notebook_only_calls_the_project_code():
 def test_the_evaluation_runs_the_phase2_steps_in_order():
     sources = [s for _, s in code_cells(next(p for p in NOTEBOOKS if p.name == EVALUATION))]
     steps = [
-        "load_test_tables(", "score_published_versions(", "build_test_cache(",
-        "phase2_eval.score_published(", "score_trained(", "build_reports(", "save_reports(",
+        "load_test_tables(", "build_test_cache(", "phase2_eval.score_published_versions(",
+        "plot_version_comparison(", "phase2_eval.score_published(", "score_trained(", "build_reports(", "save_reports(",
         "build_figures(",
     ]
     positions = [next(i for i, s in enumerate(sources) if step in s) for step in steps]
