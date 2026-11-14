@@ -196,6 +196,15 @@ def seed_averaged(counts_by_seed: Mapping[int, pd.DataFrame], model: str, unit: 
     return pd.concat(frames).groupby(level=0).mean()
 
 
+def unit_differences(
+    counts_by_seed: Mapping[int, pd.DataFrame], model_a: str, model_b: str, unit: str
+) -> pd.DataFrame:
+    """BOA of A minus BOA of B per unit, each averaged over seeds; NaN where undefined."""
+    a = seed_averaged(counts_by_seed, model_a, unit)
+    b = seed_averaged(counts_by_seed, model_b, unit)
+    return a - b
+
+
 def holm(p_values) -> np.ndarray:
     """Holm-Bonferroni adjustment, NaN left as NaN."""
     p = np.asarray(p_values, dtype=float)

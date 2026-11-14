@@ -94,3 +94,32 @@ def test_plot_experiment_comparison_rejects_a_model_missing_a_colour():
 
     with pytest.raises(ValueError):
         plot_experiment_comparison(comparison, incomplete_colors)
+
+def test_phase2_figures_have_one_panel_per_experiment():
+    import numpy as np
+
+    from cloudband.eval.plots import (
+        plot_paired_differences,
+        plot_seed_boa,
+        plot_unit_differences,
+    )
+
+    experiments = ["clear", "cloud", "shadow"]
+    index = pd.MultiIndex.from_product(
+        [["ocm", "swin", "ocm published"], experiments], names=["model", "experiment"]
+    )
+    seeds = pd.DataFrame(np.full((9, 2), 0.93), index=index, columns=["seed 0", "seed 1"])
+    seeds.insert(0, "mean", 0.93)
+    comparison = pd.DataFrame(
+        {"mean diff": 0.004, "ci95 low": 0.002, "ci95 high": 0.006}, index=experiments
+    )
+    report = {"OCM vs Swin, per ROI": comparison}
+    differences = pd.DataFrame(np.random.default_rng(0).normal(0.004, 0.01, (40, 3)),
+                               columns=experiments)
+
+    for figure in (
+        plot_seed_boa(seeds, "t"),
+        plot_paired_differences({"L1C": report, "L2A": report}, list(report), "t"),
+        plot_unit_differences(differences, "OCM", "Swin", "t"),
+    ):
+        assert [ax.get_title() for ax in figure.axes] == experiments
