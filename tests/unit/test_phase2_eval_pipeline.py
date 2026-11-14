@@ -7,15 +7,23 @@ from matplotlib.figure import Figure
 
 from cloudband.baselines import ocm
 from cloudband.eval import phase2 as evaluation
+from cloudband.eval.metrics import balanced_overall_accuracy
 from cloudband.pipelines import phase0, phase2_eval
 from cloudband.pipelines.cloudsen12 import per_scene_metric, score_split
-from cloudband.eval.metrics import balanced_overall_accuracy
-
 from tests.unit.test_phase2_evaluation import annotation, models, samples
 
 TRUTH = annotation(0)
 TRUTH[TRUTH == 99] = 0
 SPLITS = {"test": None, "test_l2a": None}
+LEVELS = ("L1C", "L2A")
+
+
+def published_prediction(version):
+    """Each version gets a different share of pixels wrong; 4.0 is the truth."""
+    prediction = TRUTH.copy()
+    wrong = np.random.default_rng(int(version)).random(TRUTH.shape) < (4 - version) / 10
+    prediction[wrong] = (prediction[wrong] + 1) % 4
+    return prediction
 
 
 class Store:
@@ -29,8 +37,13 @@ class Store:
 @pytest.fixture
 def setting(tmp_path, monkeypatch):
     data = samples(count=20)
+    calls = []
     monkeypatch.setattr(ocm, "package_version", lambda: "1.7.0")
-    monkeypatch.setattr(ocm, "predict_array", lambda stack, config: TRUTH)
+    monkeypatch.setattr(
+        ocm, "predict_array",
+        lambda stack, config: calls.append(config.model_version)
+        or published_prediction(config.model_version),
+    )
     cache = types.SimpleNamespace(samples=lambda split, table: iter(data))
     loads = []
 
@@ -38,7 +51,9 @@ def setting(tmp_path, monkeypatch):
         loads.append(seed)
         return models()
 
-    return types.SimpleNamespace(data=data, cache=cache, load=load, loads=loads, results=tmp_path)
+    return types.SimpleNamespace(
+        data=data, cache=cache, load=load, loads=loads, calls=calls, results=tmp_path
+    )
 
 
 def run(setting, store=None):
@@ -51,29 +66,43 @@ def run(setting, store=None):
     return published, counts, combined, phase2_eval.build_reports(combined)
 
 
-def test_every_seed_and_level_is_scored_once_then_read_back(setting):
+def test_every_version_seed_and_level_is_scored_once_then_read_back(setting):
     published, counts, _, _ = run(setting)
     assert sorted(counts) == ["test", "test_l2a"]
     assert sorted(counts["test"]) == [0, 1, 2, 3, 4]
     assert setting.loads == [0, 1, 2, 3, 4]
-    assert set(published["test"]["model"]) == {phase2_eval.PUBLISHED}
+    assert set(published["test"]["model"]) == set(phase2_eval.PUBLISHED)
+    # one version over every patch before the next, so the package loads it once
+    per_level = [v for v in phase2_eval.PUBLISHED_VERSIONS for _ in range(20)]
+    assert setting.calls == per_level * 2
 
     run(setting)
-    assert setting.loads == [0, 1, 2, 3, 4]   # the second run reads the saved counts
+    assert setting.loads == [0, 1, 2, 3, 4]
+    assert len(setting.calls) == len(per_level) * 2   # the second run reads the saved counts
 
 
-def test_nothing_is_scored_before_a_seed_has_all_its_networks(setting):
+def test_counts_saved_under_an_older_model_name_are_renamed(setting):
+    path = phase2_eval.counts_path(setting.results, "test", phase0.published_model_id(4.0))
+    evaluation.save_counts(
+        evaluation.score_predictor(setting.data, lambda image: TRUTH, "ocm published"), path
+    )
+    published, *_ = run(setting)
+    assert "ocm published" not in set(published["test"]["model"])
+    assert (published["test"]["model"] == phase2_eval.published_name(4.0)).sum() == 20 * 3
+
+
+def test_nothing_is_reported_before_a_seed_has_all_its_networks(setting):
     _, counts, combined, reports = run(setting, Store(done=False))
     assert counts == {"test": {}, "test_l2a": {}}
     assert combined == {} and reports == {}
-    assert phase2_eval.build_figures(reports, combined) == {}
 
 
-def test_each_level_has_its_own_report_and_the_l2a_one_is_never_pooled(setting):
-    _, counts, combined, reports = run(setting)
-    assert list(reports) == ["L1C", "L2A"]
-    for title in phase2_eval.VERSUS_PUBLISHED + phase2_eval.VERSUS_SWIN:
-        assert title in reports["L1C"]
+def test_each_level_has_its_own_report_with_every_published_version(setting):
+    _, _, combined, reports = run(setting)
+    assert tuple(reports) == LEVELS
+    for name in phase2_eval.PUBLISHED:
+        assert f"OCM vs {name}, per ROI" in reports["L1C"]
+        assert f"Swin vs {name}, per ROI" in reports["L1C"]
     expected = evaluation.report(combined["test"], published=phase2_eval.PUBLISHED)
     pd.testing.assert_frame_equal(
         reports["L1C"]["OCM vs Swin, per ROI"], expected["OCM vs Swin, per ROI"]
@@ -81,29 +110,77 @@ def test_each_level_has_its_own_report_and_the_l2a_one_is_never_pooled(setting):
     assert phase2_eval.level_agreement(reports) == {"clear": True, "cloud": True, "shadow": True}
 
 
-def test_reports_and_figures_are_saved(setting, tmp_path):
-    _, _, combined, reports = run(setting)
-    tables = phase2_eval.save_reports(reports, setting.results)
-    figures = phase2_eval.build_figures(reports, combined)
-    images = phase2_eval.save_figures(figures, tmp_path / "figures")
+def test_the_tables_are_in_points_and_name_every_model(setting):
+    _, _, _, reports = run(setting)
+    everything = phase2_eval.table_all_models(reports, "L1C")
+    assert list(everything.index.get_level_values(0).unique()) == [
+        phase2_eval.LABELS[m] for m in (*phase2_eval.PUBLISHED, *phase2_eval.TRAINED)
+    ]
+    assert everything["mean"].max() > 1   # percent, not a fraction
+    expected = evaluation.pooled_boa(run(setting)[0]["test"]).loc["ocm published 4.0", "cloud"]
+    assert everything.loc[("OCM published 4.0", "cloud"), "mean"] == pytest.approx(expected * 100)
 
-    assert len(tables) == 2 * len(reports["L1C"])
-    assert all(isinstance(figure, Figure) for figure in figures.values())
-    assert {"mean-vs-published", "differences-vs-published-per-roi",
-            "roi-vs-published-test", "roi-vs-published-test_l2a"} <= set(figures)
-    assert all(path.exists() for path in images)
+    swin = phase2_eval.table_ocm_vs_swin(reports, "L1C")
+    raw = reports["L1C"]["OCM vs Swin, per ROI"]
+    assert swin.loc[("OCM vs Swin", "cloud"), "mean diff"] == pytest.approx(
+        raw.loc["cloud", "mean diff"] * 100
+    )
+    assert swin.loc[("OCM vs Swin", "cloud"), "p"] == raw.loc["cloud", "p"]
+
+    versus = phase2_eval.table_vs_published(reports, "L1C")
+    assert len(versus.index.get_level_values(0).unique()) == 2 * len(phase2_eval.PUBLISHED)
 
 
-def test_the_published_scores_from_the_cache_match_the_phase0_run(setting, tmp_path):
+def test_published_versions_alone_give_whole_split_and_paper_tables(setting):
     published, *_ = run(setting)
-    directory = tmp_path / "baseline" / phase0.published_model_id(4.0) / phase0.CLOUDSEN12_TEST
-    directory.mkdir(parents=True)
-    per_scene_metric(
-        score_split(setting.data, lambda image: TRUTH), balanced_overall_accuracy
-    ).to_csv(directory / "per_scene_boa.csv")
+    scores = phase2_eval.published_scores(published)
+    pooled = evaluation.pooled_boa(published["test_l2a"]) * 100
+    for version in phase2_eval.PUBLISHED_VERSIONS:
+        name = phase2_eval.published_name(version)
+        assert scores.loc[("L2A", phase2_eval.LABELS[name], "shadow"), "boa"] == pytest.approx(
+            pooled.loc[name, "shadow"], abs=0.005
+        )   # as_percentages rounds to two decimals
+    paper = phase2_eval.published_cloudsen12_tables(published)
+    assert set(paper.index.get_level_values(0)) == set(LEVELS)
+    assert len(paper.index.get_level_values(1).unique()) == len(phase2_eval.PUBLISHED)
 
-    assert phase2_eval.published_gap(published, tmp_path / "baseline") == pytest.approx(0.0)
-    assert phase2_eval.published_gap(published, tmp_path / "absent") is None
+
+def test_every_figure_is_built_and_saved(setting, tmp_path):
+    _, _, combined, reports = run(setting)
+    shown = []
+    for level in LEVELS:
+        for name, figure in {
+            "all": phase2_eval.figure_all_models(reports, level),
+            "swin": phase2_eval.figure_ocm_vs_swin(reports, level),
+            "wins": phase2_eval.figure_roi_wins(combined, level),
+            "published": phase2_eval.figure_vs_published(reports, level),
+            "roi": phase2_eval.figure_roi_vs_published(combined, level),
+        }.items():
+            assert isinstance(figure, Figure)
+            assert [ax.get_title() for ax in figure.axes][:3] == ["clear", "cloud", "shadow"]
+            phase2_eval.show(figure, tmp_path / "figures", f"{level}-{name}", shown.append)
+    phase2_eval.show(phase2_eval.figure_levels(reports), tmp_path / "figures", "levels", shown.append)
+
+    assert len(shown) == 11
+    assert len(list((tmp_path / "figures").glob("*.png"))) == 11
+
+
+def test_the_cache_and_the_remote_file_give_the_same_published_boa(setting, tmp_path):
+    published, *_ = run(setting)
+    for version in (1.0, 4.0):
+        directory = (
+            tmp_path / "baseline" / phase0.published_model_id(version) / phase0.CLOUDSEN12_TEST
+        )
+        directory.mkdir(parents=True)
+        per_scene_metric(
+            score_split(setting.data, lambda image, v=version: published_prediction(v)),
+            balanced_overall_accuracy,
+        ).to_csv(directory / "per_scene_boa.csv")
+
+    gaps = phase2_eval.published_gaps(published, tmp_path / "baseline")
+    assert list(gaps["model"]) == ["OCM published 1.0", "OCM published 4.0"]
+    assert gaps["largest gap"].abs().max() == pytest.approx(0.0)
+    assert phase2_eval.published_gaps(published, tmp_path / "absent").empty
 
 
 def test_legacy_gaps_report_only_the_files_that_exist(setting):
@@ -115,24 +192,6 @@ def test_legacy_gaps_report_only_the_files_that_exist(setting):
     gaps = phase2_eval.legacy_gaps(counts["test"], setting.results)
     assert gaps[["seed", "model"]].values.tolist() == [[0, "swin"]]
     assert gaps["largest gap"].iloc[0] == pytest.approx(0.0)
-
-
-def test_published_versions_are_read_back_instead_of_run_again(tmp_path, monkeypatch):
-    monkeypatch.setattr(ocm, "package_version", lambda: "1.7.0")
-    directory = tmp_path / phase0.published_model_id(4.0) / phase0.CLOUDSEN12_TEST
-    directory.mkdir(parents=True)
-    saved = pd.DataFrame({"boa": [90.0, 91.0, 80.0]},
-                         index=pd.Index(["clear", "cloud", "shadow"], name="experiment"))
-    saved.to_csv(directory / "scores.csv")
-    saved.to_csv(directory / "paper_table.csv")
-
-    def never(*args, **kwargs):
-        raise AssertionError("a saved version must not run again")
-
-    monkeypatch.setattr(phase0, "run", never)
-    scores, paper = phase0.score_published_versions(None, (4.0,), tmp_path, log=lambda m: None)
-    pd.testing.assert_frame_equal(scores[4.0], saved)
-    assert phase0.version_label(4.0) == "V4"
 
 
 def test_the_fast_reader_check_refuses_a_mismatch(monkeypatch):
@@ -147,34 +206,3 @@ def test_the_fast_reader_check_refuses_a_mismatch(monkeypatch):
     wrong = types.SimpleNamespace(image=good.image + 1, annotation=good.annotation)
     with pytest.raises(AssertionError, match="differs from GDAL"):
         phase2_eval.check_fast_reader(lambda t, row: wrong, {"test": table})
-
-
-def test_published_versions_are_scored_at_both_levels_from_the_cache(setting, monkeypatch):
-    from cloudband.eval.plots import plot_version_comparison
-
-    tables = {"test": pd.DataFrame(index=range(20)), "test_l2a": pd.DataFrame(index=range(20))}
-    calls = []
-    monkeypatch.setattr(ocm, "predict_array", lambda stack, config: calls.append(1) or TRUTH)
-    monkeypatch.setattr(phase0.dataset, "iter_samples", lambda *a, **k: pytest.fail("no remote read"))
-
-    def score():
-        return phase2_eval.score_published_versions(
-            setting.cache, tables, (1.0, 4.0), setting.results, log=lambda m: None
-        )
-
-    versions = score()
-    assert list(versions) == ["L1C", "L2A"]
-    assert len(calls) == 2 * 2 * 20
-    for split, dataset_id in phase2_eval.DATASET_IDS.items():
-        assert (setting.results / phase0.published_model_id(4.0) / dataset_id / "paper_table.csv").exists()
-
-    again = score()
-    assert len(calls) == 2 * 2 * 20   # read back, not run again
-    pd.testing.assert_frame_equal(
-        phase2_eval.version_table(again, "scores"), phase2_eval.version_table(versions, "scores"),
-        check_exact=False,
-    )
-    comparison = phase2_eval.version_comparison(versions)
-    assert list(comparison["L1C"].columns) == ["V1", "V4"]
-    figure = plot_version_comparison(comparison, "t")
-    assert [ax.get_title() for ax in figure.axes] == ["clear", "cloud", "shadow"]

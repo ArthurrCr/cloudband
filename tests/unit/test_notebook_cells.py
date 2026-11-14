@@ -50,9 +50,9 @@ def test_the_evaluation_notebook_only_calls_the_project_code():
 def test_the_evaluation_runs_the_phase2_steps_in_order():
     sources = [s for _, s in code_cells(next(p for p in NOTEBOOKS if p.name == EVALUATION))]
     steps = [
-        "load_test_tables(", "build_test_cache(", "phase2_eval.score_published_versions(",
-        "plot_version_comparison(", "phase2_eval.score_published(", "score_trained(", "build_reports(", "save_reports(",
-        "build_figures(",
+        "load_test_tables(", "build_test_cache(", "phase2_eval.score_published(",
+        "score_trained(", "build_reports(", "save_reports(", "figure_all_models(reports, \"L1C\")",
+        "figure_all_models(reports, \"L2A\")", "figure_levels(",
     ]
     positions = [next(i for i, s in enumerate(sources) if step in s) for step in steps]
     assert positions == sorted(positions)
@@ -82,3 +82,19 @@ def test_the_phase2_evaluation_sits_beside_the_published_omnicloudmask():
 @pytest.mark.parametrize("path", NOTEBOOKS, ids=lambda p: p.name)
 def test_notebooks_leave_the_test_suite_to_the_repository(path):
     assert "pytest" not in "\n".join(source for _, source in code_cells(path))
+
+
+def test_every_figure_of_the_evaluation_has_a_cell_of_its_own_under_a_heading():
+    cells = json.loads(next(p for p in NOTEBOOKS if p.name == EVALUATION).read_text())["cells"]
+    kinds = []
+    for index, cell in enumerate(cells):
+        source = "".join(cell["source"])
+        if cell["cell_type"] == "markdown":
+            kinds.append("heading")
+        elif "phase2_eval.show(" in source:
+            assert source.count("phase2_eval.show(") == 1, f"cell {index} shows several figures"
+            kinds.append("figure")
+    figures = [i for i, kind in enumerate(kinds) if kind == "figure"]
+    assert len(figures) >= 11
+    for before, after in zip([-1] + figures, figures):
+        assert "heading" in kinds[before + 1:after], "two figures with no heading between them"

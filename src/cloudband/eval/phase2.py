@@ -15,7 +15,7 @@ resamples ROIs, never single patches.
 
 from __future__ import annotations
 
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 
 import numpy as np
 import pandas as pd
@@ -286,14 +286,17 @@ def paired_comparison(
 
 
 def report(
-    counts_by_seed: Mapping[int, pd.DataFrame], published: str | None = None
+    counts_by_seed: Mapping[int, pd.DataFrame], published: Sequence[str] = ()
 ) -> dict[str, pd.DataFrame]:
     """Every table of the comparison, from the counts of each seed.
 
-    With ``published``, the name of the published OmniCloudMask in the counts, every
-    trained model (the OCM ensemble, each of its backbones, Swin) is also compared with it. It was trained on other data and with
-    another recipe, so it is a reference point, not part of the controlled comparison.
+    published names the published OmniCloudMask models in the counts. The OCM
+    ensemble and Swin are each compared with every one of them. They were trained on
+    other data and with another recipe, so they are reference points, not part of the
+    controlled comparison.
     """
+    if isinstance(published, str):
+        published = (published,)
     tables = {
         "whole split, per seed": seed_table(counts_by_seed),
         "OCM vs Swin, per ROI": paired_comparison(counts_by_seed, "ocm", "swin", "roi"),
@@ -305,15 +308,28 @@ def report(
             counts_by_seed, "convnext", "swin", "roi"
         ),
     }
-    if published is not None:
-        for model, name in (
-            ("ocm", "OCM"), ("regnety", "regnety alone"), ("convnext", "convnext alone"),
-            ("swin", "Swin"),
-        ):
-            tables[f"{name} vs {published}, per ROI"] = paired_comparison(
-                counts_by_seed, model, published, "roi"
+    for name in published:
+        for model, label in (("ocm", "OCM"), ("swin", "Swin")):
+            tables[f"{label} vs {name}, per ROI"] = paired_comparison(
+                counts_by_seed, model, name, "roi"
             )
     return tables
+
+
+def stacked(tables: Mapping[str, pd.DataFrame], titles: Sequence[str]) -> pd.DataFrame:
+    """Several comparison tables in one, indexed by comparison and experiment.
+
+    The per-model BOA columns are dropped, since their names differ between tables;
+    what remains is the difference, its interval, the share of units and the p-values.
+    """
+    columns = ["n", "mean diff", "ci95 low", "ci95 high", "median diff", "p", "p holm"]
+    frames = {}
+    for title in titles:
+        table = tables[title]
+        better = next(c for c in table.columns if c.endswith(" better in"))
+        frame = table[columns[:5]].assign(**{"first better in": table[better]})
+        frames[title.split(",")[0]] = frame.join(table[columns[5:]])
+    return pd.concat(frames, names=["comparison", "experiment"])
 
 
 def legacy_check(counts: pd.DataFrame, model: str, legacy: pd.DataFrame) -> float:

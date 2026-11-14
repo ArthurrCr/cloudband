@@ -224,13 +224,16 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   nos três experimentos; e, por ROI, cada backbone do OCM sozinha × Swin, para separar o efeito do ensemble.
 >   O BOA por patch do caminho novo coincide com o do pipeline anterior (testado, e conferido no notebook contra
 >   os CSVs antigos).
->   O mesmo notebook avalia o OmniCloudMask publicado (pacote 1.7.0, modelo 4.0) nos mesmos patches do cache, e ele
->   entra nas tabelas como referência: OCM retreinado × publicado e Swin × publicado, por ROI. Não faz parte da
->   comparação controlada, porque foi treinado com outros dados e outra receita.
->   O notebook só chama `pipelines/phase2_eval.py` (e `pipelines/phase0.py` para as versões publicadas), que
->   salva as tabelas e as figuras em `cloudband_treino/results`: BOA por seed; média das seeds ± DP de cada
->   modelo treinado contra o OCM publicado 4.0; diferenças pareadas por ROI contra o publicado e contra o Swin;
->   BOA por ROI dos modelos treinados contra o do publicado; e o histograma de OCM − Swin por ROI.
+>   O mesmo notebook avalia as quatro versões publicadas do OmniCloudMask (pacote 1.7.0, modelos 1.0 a 4.0) nos
+>   mesmos patches do cache, em L1C e L2A, e elas entram nas tabelas e nos gráficos como referência: OCM e Swin
+>   treinados contra cada versão, por ROI. Não fazem parte da comparação controlada, porque foram treinadas com
+>   outros dados e outra receita. O BOA por patch lido do cache é conferido contra o da avaliação anterior, lida do
+>   arquivo remoto.
+>   O notebook só chama `pipelines/phase2_eval.py`. Cada gráfico tem a sua célula, sob um título com a pergunta
+>   que responde, e a mesma sequência se repete para L1C e L2A: onde cada modelo fica (BOA do split inteiro, as
+>   quatro versões publicadas e as seeds dos treinados); OCM − Swin por ROI (e cada backbone sozinha); em quantos
+>   ROIs o OCM vence; OCM e Swin contra cada versão publicada; BOA por ROI contra o publicado 4.0. No fim, OCM − Swin
+>   em L1C e em L2A lado a lado. Tabelas e figuras ficam em `cloudband_treino/results`.
 
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 
