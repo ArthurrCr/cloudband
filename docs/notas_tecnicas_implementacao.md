@@ -242,7 +242,9 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   seeds. Os testes pareados continuam por ROI, com as matrizes dos 5 patches somadas (2.10).
 >   **Recorte corrigido em 15/11/2026 (DIVERGENCES D17):** o preenchimento de 509 para 512 fica à direita e embaixo,
 >   não à esquerda como diz o README. O recorte antigo mantinha 3 colunas de preenchimento rotuladas como clear e
->   perdia 3 colunas reais. A avaliação é refeita com o recorte novo (arquivos `...-crop2-...`).
+>   perdia 3 colunas reais. A avaliação é refeita com o recorte novo (arquivos `...-crop2-...`). Os modelos **não são
+>   retreinados** (decisão de 15/11/2026): treino e validação usaram o recorte antigo, igual para as duas arquiteturas,
+>   e isso deve ser declarado como limitação ao reportar. Detalhes e justificativa no D17.
 
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 
