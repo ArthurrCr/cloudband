@@ -151,7 +151,6 @@ def plot_all_models(
 # dark), Swin orange.
 PUBLISHED_RAMP = ("#d3d2cc", "#b0afa8", "#8a8984", "#5f5e59")
 OCM_RAMP = {"regnety": "#86b6ef", "convnext": "#5598e7", "ocm": "#1c5cab"}
-CHANCE_BOA = 50.0
 
 
 def share_colors(models: Sequence[str]) -> dict[str, str]:
@@ -177,15 +176,11 @@ def plot_boa_by_share(
     table is one experiment of evaluation.boa_by_share, indexed by (bin, model), with
     the patch count n, the mean BOA and its SD across seeds. One group of bars per
     range, one bar per model in the given order, the number of patches under each
-    group. Bars start at 50%, the BOA of a classifier that guesses; a model with
-    seeds carries a line of one SD.
+    group. The axis runs from 0 to 100%; a model with seeds carries a line of one SD.
     """
     bins = list(dict.fromkeys(table.index.get_level_values(0)))
     colors = share_colors(models)
     width = 0.84 / len(models)
-    means = table["mean"] * 100
-    lowest = float(np.nanmin(means.to_numpy())) if means.notna().any() else CHANCE_BOA
-    bottom = min(CHANCE_BOA, np.floor(lowest - 2))
 
     fig, ax = plt.subplots(figsize=(13, 5.2))
     for index, model in enumerate(models):
@@ -197,19 +192,18 @@ def plot_boa_by_share(
             if np.isnan(row["mean"]):
                 continue
             positions.append(group - 0.42 + width * (index + 0.5))
-            heights.append(row["mean"] * 100 - bottom)
+            heights.append(row["mean"] * 100)
             spreads.append(0.0 if np.isnan(row["sd"]) else row["sd"] * 100)
-        ax.bar(positions, heights, width=width, bottom=bottom, color=colors[model],
+        ax.bar(positions, heights, width=width, color=colors[model],
                edgecolor="white", linewidth=1, label=labels.get(model, model), zorder=2)
         if any(spreads):
-            tops = [bottom + h for h in heights]
-            ax.errorbar(positions, tops, yerr=spreads, fmt="none", ecolor=INK,
+            ax.errorbar(positions, heights, yerr=spreads, fmt="none", ecolor=INK,
                         elinewidth=1, capsize=0, zorder=3)
     sizes = table.groupby(level=0, sort=False)["n"].first()
     ax.set_xticks(range(len(bins)),
                   [f"{b}\nn = {int(sizes[b])} patches" for b in bins], color=INK)
     ax.set_xlim(-0.55, len(bins) - 0.45)
-    ax.set_ylim(bottom, 100)
+    ax.set_ylim(0, 100)
     ax.set_ylabel("BOA (%)", color=MUTED)
     ax.set_xlabel("share of the patch's annotated pixels in the class", color=MUTED)
     _quiet(ax, axis="y")
@@ -217,8 +211,7 @@ def plot_boa_by_share(
     ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0), labelcolor=INK,
               fontsize=9)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, f"bars start at {bottom:g}% (50% is a classifier that guesses)  ·  "
-             "trained models: mean of the 5 seeds, line = ± one SD  ·  "
+    fig.text(0.01, 0.005, "trained models: mean of the 5 seeds, line = ± one SD  ·  "
              "BOA of a range from the summed counts of its patches",
              color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
