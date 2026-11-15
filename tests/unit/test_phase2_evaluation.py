@@ -207,12 +207,43 @@ def test_the_published_model_joins_every_seed_and_gets_its_own_comparisons():
         evaluation.with_reference(counts_by_seed, published)
 
 
-def test_unit_differences_give_the_mean_difference_of_the_paired_table():
-    counts_by_seed = {0: score(), 1: score(samples(), models(truth_seed=1))}
-    differences = evaluation.unit_differences(counts_by_seed, "ocm", "swin", "roi")
-    table = evaluation.paired_comparison(counts_by_seed, "ocm", "swin", "roi")
+def test_share_bins_include_the_lower_edge_and_the_last_includes_100():
+    share = pd.Series([0.0, 9.99, 10.0, 29.9, 30.0, 59.9, 60.0, 100.0])
+    assert evaluation.share_bin(share).tolist() == [
+        "0–10%", "0–10%", "10–30%", "10–30%", "30–60%", "30–60%", "60–100%", "60–100%"
+    ]
 
-    for experiment in ("clear", "cloud", "shadow"):
-        assert differences[experiment].dropna().mean() == pytest.approx(
-            table.loc[experiment, "mean diff"]
-        )
+
+def test_the_class_share_is_the_positive_side_of_each_experiment():
+    counts = score()
+    share = evaluation.class_share(counts)
+    one = counts[(counts.model == "swin") & (counts.scene == "p000")].set_index("experiment")
+    annotated = one.loc["cloud", ["tp", "tn", "fp", "fn"]].sum()
+    assert share.loc[("p000", "cloud")] == pytest.approx(
+        (one.loc["cloud", "tp"] + one.loc["cloud", "fn"]) / annotated * 100
+    )
+    # the three classes partition the annotated pixels
+    assert share.groupby(level="scene").sum().to_numpy() == pytest.approx(100.0)
+
+    broken = counts.copy()
+    broken.loc[broken.index[0], "fn"] += 5
+    with pytest.raises(ValueError, match="disagree"):
+        evaluation.class_share(broken)
+
+
+def test_boa_by_share_counts_every_patch_once_and_pools_each_range():
+    data = samples(count=30)
+    counts_by_seed = {0: score(data), 1: score(data, models(truth_seed=1))}
+    table = evaluation.boa_by_share(counts_by_seed)
+
+    sizes = table["n"].groupby(level=["experiment", "bin"]).first()
+    assert (sizes.groupby(level="experiment").sum() == 30).all()
+
+    binned = evaluation.share_bin(evaluation.class_share(counts_by_seed[0]))
+    frame = counts_by_seed[1].join(binned, on=["scene", "experiment"])
+    some_bin = table.loc["cloud"].index.get_level_values(0)[0]
+    part = frame[(frame.experiment == "cloud") & (frame.bin == some_bin) & (frame.model == "ocm")]
+    expected = evaluation.boa(part[["tp", "tn", "fp", "fn"]].sum().to_frame().T).iloc[0]
+    assert table.loc[("cloud", some_bin, "ocm"), "seed 1"] == pytest.approx(expected)
+    assert list(table.columns[:3]) == ["n", "mean", "sd"]
+

@@ -69,10 +69,11 @@ LABELS = {
     "swin": "Swin-T + UPerNet trained",
     **{published_name(v): f"OCM published {v:.1f}" for v in PUBLISHED_VERSIONS},
 }
-COMPARISON_LABELS = {
-    "OCM vs Swin, per ROI": "OCM ensemble − Swin",
-    "regnety alone vs Swin, per ROI": "regnety alone − Swin",
-    "convnext alone vs Swin, per ROI": "convnext alone − Swin",
+# The class whose share sorts the patches into ranges, per experiment.
+SHARE_CLASSES = {
+    "clear": "clear",
+    "cloud": "cloud (thick + thin)",
+    "shadow": "cloud shadow",
 }
 
 
@@ -412,7 +413,7 @@ def level_agreement(reports, title: str = VERSUS_SWIN[0]):
     return (np.sign(first) == np.sign(second)).to_dict()
 
 
-# ---- figures, one question each --------------------------------------------------
+# ---- figures ---------------------------------------------------------------------
 
 
 def figure_all_models(reports, level: str) -> Figure:
@@ -427,49 +428,30 @@ def figure_all_models(reports, level: str) -> Figure:
     )
 
 
-def figure_ocm_vs_swin(reports, level: str) -> Figure:
-    """Trained OCM (and each backbone) against trained Swin, per ROI."""
-    return plots.plot_paired_differences(
-        {level: reports[level]}, VERSUS_SWIN,
-        f"Trained OCM minus trained Swin, per ROI, {level} test",
-        labels=COMPARISON_LABELS,
-    )
+def _share_models(by_seed) -> list[str]:
+    present = set(next(iter(by_seed.values()))["model"])
+    return [m for m in (*PUBLISHED, *TRAINED) if m in present]
 
 
-def figure_vs_published(reports, level: str) -> Figure:
-    """Trained OCM and Swin against each published version, per ROI."""
-    present = [n for n in PUBLISHED if f"OCM vs {n}, per ROI" in reports[level]]
-    return plots.plot_versus_references(
-        reports[level], {"OCM": "OCM trained", "Swin": "Swin trained"},
-        present, LABELS,
-        f"Trained models minus each published OmniCloudMask version, per ROI, {level} test",
-    )
-
-
-def figure_roi_wins(combined, level: str) -> Figure:
-    """How many ROIs the trained OCM wins over the trained Swin."""
-    return plots.plot_unit_differences(
-        evaluation.unit_differences(combined[SPLITS[level]], "ocm", "swin", "roi"),
-        "OCM", "Swin", f"Trained OCM minus trained Swin, BOA per ROI, {level} test",
-    )
-
-
-def figure_roi_vs_published(combined, level: str, version: float = ocm.LATEST_MODEL_VERSION) -> Figure:
-    """Each ROI: trained OCM and Swin (seed mean) against one published version."""
+def table_by_share(combined, level: str) -> pd.DataFrame:
+    """Mean BOA (percent) of every model in each range of class share, per experiment."""
     by_seed = combined[SPLITS[level]]
-    name = published_name(version)
-    per_roi = {m: evaluation.seed_averaged(by_seed, m, "roi") for m in ("ocm", "swin", name)}
-    return plots.plot_unit_scatter(
-        {"OCM": per_roi["ocm"], "Swin": per_roi["swin"]}, per_roi[name], LABELS[name],
-        f"BOA per ROI: trained models (seed mean) against {LABELS[name]}, {level} test",
-    )
+    table = evaluation.boa_by_share(by_seed)
+    wide = (table["mean"] * 100).unstack("model")[_share_models(by_seed)]
+    wide = wide.rename(columns=LABELS)
+    wide.insert(0, "patches", table["n"].groupby(level=["experiment", "bin"]).first())
+    wide.index.names = ["experiment", "class share"]
+    return wide
 
 
-def figure_levels(reports) -> Figure:
-    """Whether OCM minus Swin holds at both levels."""
-    return plots.plot_paired_differences(
-        reports, VERSUS_SWIN[:1], "Trained OCM minus trained Swin, per ROI: L1C and L2A",
-        labels=COMPARISON_LABELS,
+def figure_by_share(combined, level: str, experiment: str) -> Figure:
+    """BOA of every model per range of the experiment's class share, one experiment."""
+    by_seed = combined[SPLITS[level]]
+    table = evaluation.boa_by_share(by_seed).loc[experiment]
+    return plots.plot_boa_by_share(
+        table, _share_models(by_seed), LABELS,
+        f"{experiment}: BOA by share of {SHARE_CLASSES[experiment]} pixels in the patch, "
+        f"{level} test",
     )
 
 

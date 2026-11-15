@@ -95,15 +95,10 @@ def test_plot_experiment_comparison_rejects_a_model_missing_a_colour():
     with pytest.raises(ValueError):
         plot_experiment_comparison(comparison, incomplete_colors)
 
-def test_phase2_figures_have_one_panel_per_experiment():
+def test_phase2_figures():
     import numpy as np
 
-    from cloudband.eval.plots import (
-        plot_all_models,
-        plot_paired_differences,
-        plot_unit_differences,
-        plot_versus_references,
-    )
+    from cloudband.eval.plots import plot_all_models, plot_boa_by_share, share_colors
 
     experiments = ["clear", "cloud", "shadow"]
     index = pd.MultiIndex.from_product(
@@ -112,21 +107,21 @@ def test_phase2_figures_have_one_panel_per_experiment():
     seeds = pd.DataFrame(np.full((9, 2), 0.93), index=index, columns=["seed 0", "seed 1"])
     seeds.loc[("ocm", "cloud"), "seed 1"] = 0.94
     seeds.insert(0, "mean", seeds.mean(axis=1))
-    comparison = pd.DataFrame(
-        {"mean diff": 0.004, "ci95 low": 0.002, "ci95 high": 0.006}, index=experiments
-    )
-    report = {
-        "OCM vs Swin, per ROI": comparison,
-        "OCM vs ref, per ROI": comparison,
-        "Swin vs ref, per ROI": -comparison,
-    }
-    differences = pd.DataFrame(np.random.default_rng(0).normal(0.004, 0.01, (40, 3)),
-                               columns=experiments)
+    figure = plot_all_models(seeds, [["ocm published 4.0"], ["ocm", "swin"]], {}, "t")
+    assert [ax.get_title() for ax in figure.axes] == experiments
 
-    for figure in (
-        plot_all_models(seeds, [["ocm published 4.0"], ["ocm", "swin"]], {}, "t"),
-        plot_paired_differences({"L1C": report, "L2A": report}, ["OCM vs Swin, per ROI"], "t"),
-        plot_versus_references(report, {"OCM": "OCM", "Swin": "Swin"}, ["ref"], {}, "t"),
-        plot_unit_differences(differences, "OCM", "Swin", "t"),
-    ):
-        assert [ax.get_title() for ax in figure.axes] == experiments
+    models = ["ocm published 1.0", "ocm published 4.0", "regnety", "ocm", "swin"]
+    bins = ["0–10%", "10–30%"]
+    table = pd.DataFrame(
+        {"n": 10, "mean": 0.9, "sd": 0.01},
+        index=pd.MultiIndex.from_product([bins, models], names=["bin", "model"]),
+    )
+    table.loc[("10–30%", "regnety"), "mean"] = np.nan
+    figure = plot_boa_by_share(table, models, {}, "t")
+    ax = figure.axes[0]
+    assert [label.get_text() for label in ax.get_xticklabels()] == [
+        "0–10%\nn = 10 patches", "10–30%\nn = 10 patches"
+    ]
+    assert len(ax.patches) == len(bins) * len(models) - 1   # no bar where the BOA is undefined
+    colors = share_colors(models)
+    assert len(set(colors.values())) == len(models)

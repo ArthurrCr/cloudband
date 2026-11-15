@@ -196,15 +196,6 @@ def seed_averaged(counts_by_seed: Mapping[int, pd.DataFrame], model: str, unit: 
     return pd.concat(frames).groupby(level=0).mean()
 
 
-def unit_differences(
-    counts_by_seed: Mapping[int, pd.DataFrame], model_a: str, model_b: str, unit: str
-) -> pd.DataFrame:
-    """BOA of A minus BOA of B per unit, each averaged over seeds; NaN where undefined."""
-    a = seed_averaged(counts_by_seed, model_a, unit)
-    b = seed_averaged(counts_by_seed, model_b, unit)
-    return a - b
-
-
 def holm(p_values) -> np.ndarray:
     """Holm-Bonferroni adjustment, NaN left as NaN."""
     p = np.asarray(p_values, dtype=float)
@@ -344,3 +335,69 @@ def legacy_check(counts: pd.DataFrame, model: str, legacy: pd.DataFrame) -> floa
         if f"{e}_old" in joined
     ]
     return float(np.nanmax(gaps)) if gaps else float("nan")
+
+
+SHARE_BINS = (0.0, 10.0, 30.0, 60.0, 100.0)
+
+
+def share_labels(bins: Sequence[float] = SHARE_BINS) -> list[str]:
+    return [f"{low:g}–{high:g}%" for low, high in zip(bins[:-1], bins[1:])]
+
+
+def class_share(counts: pd.DataFrame) -> pd.Series:
+    """Percent of each patch's annotated pixels in each experiment's class.
+
+    The class of an experiment is its positive side (cloud is thick plus thin cloud
+    against clear and shadow), so its pixels are tp + fn. It comes from the
+    annotation alone, so every model of the counts must agree on it.
+    """
+    totals = counts[list(COUNTS)].sum(axis=1)
+    share = (counts["tp"] + counts["fn"]) / totals.where(totals > 0) * 100
+    frame = counts[["model", "scene", "experiment"]].assign(share=share)
+    spread = frame.groupby(["scene", "experiment"])["share"].agg(["min", "max"])
+    if not np.allclose(spread["min"], spread["max"], equal_nan=True):
+        raise ValueError("the models disagree on the class share of some patches")
+    return spread["min"].rename("share")
+
+
+def share_bin(share: pd.Series, bins: Sequence[float] = SHARE_BINS) -> pd.Series:
+    """Bin label of each share: each range includes its lower edge, the last also 100."""
+    labels = share_labels(bins)
+    position = np.searchsorted(np.asarray(bins[1:-1]), share.to_numpy(), side="right")
+    return pd.Series(
+        pd.Categorical([labels[p] for p in position], categories=labels, ordered=True),
+        index=share.index, name="bin",
+    )
+
+
+def boa_by_share(
+    counts_by_seed: Mapping[int, pd.DataFrame], bins: Sequence[float] = SHARE_BINS
+) -> pd.DataFrame:
+    """BOA of every model in each range of class share, per experiment.
+
+    Patches are grouped by the share of the experiment's class in them, and the BOA
+    of a group comes from its summed counts, as for the whole split; a patch without
+    the class still adds to the specificity. Returns, per (experiment, bin, model),
+    the number of patches n, each seed's BOA, their mean and SD.
+    """
+    frames = list(counts_by_seed.values())
+    binned = share_bin(class_share(frames[0]), bins)
+    per_seed, sizes = {}, None
+    for seed, frame in counts_by_seed.items():
+        frame = frame.join(binned, on=["scene", "experiment"])
+        summed = frame.groupby(["experiment", "bin", "model"], observed=True)[list(COUNTS)].sum()
+        per_seed[f"seed {seed}"] = boa(summed)
+        if sizes is None:
+            sizes = (
+                frame.drop_duplicates(["scene", "experiment"])
+                .groupby(["experiment", "bin"], observed=True)
+                .size()
+                .rename("n")
+            )
+    table = pd.DataFrame(per_seed)
+    values = table.to_numpy()
+    table.insert(0, "sd", values.std(axis=1, ddof=1) if values.shape[1] > 1 else np.nan)
+    table.insert(0, "mean", values.mean(axis=1))
+    table = table.join(sizes, on=["experiment", "bin"])
+    return table[["n", *[c for c in table.columns if c != "n"]]]
+
