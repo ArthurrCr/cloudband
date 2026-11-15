@@ -369,6 +369,12 @@ def legacy_check(counts: pd.DataFrame, model: str, legacy: pd.DataFrame) -> floa
 
 
 SHARE_BINS = (0.0, 10.0, 30.0, 60.0, 100.0)
+# Shadow covers much less of a patch than clear or cloud, so its ranges are narrower.
+SHARE_BINS_BY_EXPERIMENT = {
+    "clear": SHARE_BINS,
+    "cloud": SHARE_BINS,
+    "shadow": (0.0, 5.0, 15.0, 40.0, 100.0),
+}
 
 
 def share_labels(bins: Sequence[float] = SHARE_BINS) -> list[str]:
@@ -401,18 +407,39 @@ def share_bin(share: pd.Series, bins: Sequence[float] = SHARE_BINS) -> pd.Series
     )
 
 
+def share_bin_by_experiment(
+    share: pd.Series, bins: Mapping[str, Sequence[float]] = SHARE_BINS_BY_EXPERIMENT
+) -> pd.Series:
+    """Bin label of each (scene, experiment) share, with each experiment's own ranges.
+
+    The labels of all experiments form one ordered category, sorted by their edges,
+    so the ranges of any one experiment come out in order.
+    """
+    edges = sorted({pair for b in bins.values() for pair in zip(b[:-1], b[1:])})
+    order = [f"{low:g}–{high:g}%" for low, high in edges]
+    parts = []
+    for experiment, part in share.groupby(level="experiment"):
+        parts.append(share_bin(part, bins[experiment]).astype(str))
+    labels = pd.concat(parts).reindex(share.index)
+    return pd.Series(
+        pd.Categorical(labels, categories=order, ordered=True), index=share.index, name="bin"
+    )
+
+
 def boa_by_share(
-    counts_by_seed: Mapping[int, pd.DataFrame], bins: Sequence[float] = SHARE_BINS
+    counts_by_seed: Mapping[int, pd.DataFrame],
+    bins: Mapping[str, Sequence[float]] = SHARE_BINS_BY_EXPERIMENT,
 ) -> pd.DataFrame:
     """Median BOA per patch of every model in each range of class share, per experiment.
 
-    Patches are grouped by the share of the experiment's class in them; within a
+    Patches are grouped by the share of the experiment's class in them, in that
+    experiment's ranges (SHARE_BINS_BY_EXPERIMENT: shadow has narrower ones); within a
     range, the BOA follows the CloudSEN12 convention: the median of the per-patch BOA
     over the patches where it is defined. Returns, per (experiment, bin, model), the
     number of those patches n, each seed's median, their mean and SD.
     """
     frames = list(counts_by_seed.values())
-    binned = share_bin(class_share(frames[0]), bins)
+    binned = share_bin_by_experiment(class_share(frames[0]), bins)
     per_seed, sizes = {}, None
     for seed, frame in counts_by_seed.items():
         frame = frame.join(binned, on=["scene", "experiment"]).assign(boa=boa(frame))

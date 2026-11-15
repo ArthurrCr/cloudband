@@ -232,7 +232,8 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   O notebook só chama `pipelines/phase2_eval.py`. Cada gráfico tem a sua célula, sob um título, e a mesma
 >   sequência se repete para L1C e L2A: onde cada modelo fica (as quatro versões publicadas e as seeds dos
 >   treinados); BOA por faixa da porcentagem de pixels da classe do experimento no patch (0–10%, 10–30%, 30–60%,
->   60–100%; em cloud, nuvem espessa + fina), um gráfico de barras por experimento; e as tabelas dos testes
+>   60–100%; em cloud, nuvem espessa + fina; em shadow, que ocupa menos do patch, 0–5%, 5–15%, 15–40%, 40–100%), um
+>   gráfico de barras por experimento; e as tabelas dos testes
 >   (OCM − Swin e cada backbone − Swin; OCM e Swin − cada versão publicada). Tabelas e figuras ficam em
 >   `cloudband_treino/results`.
 >   Os gráficos e as tabelas descritivas seguem a convenção do CloudSEN12 (Aybar et al. 2022, Tabela 6): o BOA de

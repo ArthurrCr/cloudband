@@ -214,6 +214,18 @@ def test_share_bins_include_the_lower_edge_and_the_last_includes_100():
     ]
 
 
+def test_shadow_has_its_own_narrower_ranges():
+    index = pd.MultiIndex.from_tuples(
+        [("a", "cloud"), ("a", "shadow"), ("b", "cloud"), ("b", "shadow"), ("c", "shadow")],
+        names=["scene", "experiment"],
+    )
+    binned = evaluation.share_bin_by_experiment(pd.Series([8.0, 8.0, 45.0, 45.0, 4.9], index=index))
+    assert binned.astype(str).tolist() == ["0–10%", "5–15%", "30–60%", "40–100%", "0–5%"]
+    shadow = sorted(set(binned[binned.index.get_level_values("experiment") == "shadow"]),
+                    key=list(binned.cat.categories).index)
+    assert shadow == ["0–5%", "5–15%", "40–100%"]
+
+
 def test_the_class_share_is_the_positive_side_of_each_experiment():
     counts = score()
     share = evaluation.class_share(counts)
@@ -236,7 +248,7 @@ def test_boa_by_share_is_the_median_over_the_patches_with_a_defined_boa():
     counts_by_seed = {0: score(data), 1: score(data, models(truth_seed=1))}
     table = evaluation.boa_by_share(counts_by_seed)
 
-    binned = evaluation.share_bin(evaluation.class_share(counts_by_seed[0]))
+    binned = evaluation.share_bin_by_experiment(evaluation.class_share(counts_by_seed[0]))
     frame = counts_by_seed[1].join(binned, on=["scene", "experiment"])
     frame["boa"] = evaluation.boa(frame)
     for (experiment, bin_label, model), row in table.iterrows():
