@@ -229,11 +229,13 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   treinados contra cada versão, por ROI. Não fazem parte da comparação controlada, porque foram treinadas com
 >   outros dados e outra receita. O BOA por patch lido do cache é conferido contra o da avaliação anterior, lida do
 >   arquivo remoto.
->   O notebook só chama `pipelines/phase2_eval.py`. Cada gráfico tem a sua célula, sob um título com a pergunta
->   que responde, e a mesma sequência se repete para L1C e L2A: onde cada modelo fica (BOA do split inteiro, as
->   quatro versões publicadas e as seeds dos treinados); OCM − Swin por ROI (e cada backbone sozinha); em quantos
->   ROIs o OCM vence; OCM e Swin contra cada versão publicada; BOA por ROI contra o publicado 4.0. No fim, OCM − Swin
->   em L1C e em L2A lado a lado. Tabelas e figuras ficam em `cloudband_treino/results`.
+>   O notebook só chama `pipelines/phase2_eval.py`. Cada gráfico tem a sua célula, sob um título, e a mesma
+>   sequência se repete para L1C e L2A: onde cada modelo fica (BOA do split inteiro, as quatro versões publicadas
+>   e as seeds dos treinados); BOA por faixa da porcentagem de pixels da classe do experimento no patch (0–10%,
+>   10–30%, 30–60%, 60–100%; em cloud, nuvem espessa + fina), um gráfico de barras por experimento com o número de
+>   patches de cada faixa, e o BOA de cada faixa tirado das contagens somadas dos seus patches; e as tabelas dos
+>   testes (OCM − Swin e cada backbone − Swin; OCM e Swin − cada versão publicada). Tabelas e figuras ficam em
+>   `cloudband_treino/results`.
 
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 

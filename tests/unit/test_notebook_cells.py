@@ -52,7 +52,7 @@ def test_the_evaluation_runs_the_phase2_steps_in_order():
     steps = [
         "load_test_tables(", "build_test_cache(", "phase2_eval.score_published(",
         "score_trained(", "build_reports(", "save_reports(", "figure_all_models(reports, \"L1C\")",
-        "figure_all_models(reports, \"L2A\")", "figure_levels(",
+        "figure_all_models(reports, \"L2A\")", "level_agreement(",
     ]
     positions = [next(i for i, s in enumerate(sources) if step in s) for step in steps]
     assert positions == sorted(positions)
@@ -95,6 +95,6 @@ def test_every_figure_of_the_evaluation_has_a_cell_of_its_own_under_a_heading():
             assert source.count("phase2_eval.show(") == 1, f"cell {index} shows several figures"
             kinds.append("figure")
     figures = [i for i, kind in enumerate(kinds) if kind == "figure"]
-    assert len(figures) >= 11
+    assert len(figures) == 8   # per level: every model, and one per experiment by class share
     for before, after in zip([-1] + figures, figures):
         assert "heading" in kinds[before + 1:after], "two figures with no heading between them"

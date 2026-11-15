@@ -149,20 +149,27 @@ def test_every_figure_is_built_and_saved(setting, tmp_path):
     _, _, combined, reports = run(setting)
     shown = []
     for level in LEVELS:
-        for name, figure in {
-            "all": phase2_eval.figure_all_models(reports, level),
-            "swin": phase2_eval.figure_ocm_vs_swin(reports, level),
-            "wins": phase2_eval.figure_roi_wins(combined, level),
-            "published": phase2_eval.figure_vs_published(reports, level),
-            "roi": phase2_eval.figure_roi_vs_published(combined, level),
-        }.items():
+        figures = {"all": phase2_eval.figure_all_models(reports, level)}
+        for experiment in ("clear", "cloud", "shadow"):
+            figures[experiment] = phase2_eval.figure_by_share(combined, level, experiment)
+        for name, figure in figures.items():
             assert isinstance(figure, Figure)
-            assert [ax.get_title() for ax in figure.axes][:3] == ["clear", "cloud", "shadow"]
+            assert level in figure._suptitle.get_text()
             phase2_eval.show(figure, tmp_path / "figures", f"{level}-{name}", shown.append)
-    phase2_eval.show(phase2_eval.figure_levels(reports), tmp_path / "figures", "levels", shown.append)
 
-    assert len(shown) == 11
-    assert len(list((tmp_path / "figures").glob("*.png"))) == 11
+    assert len(shown) == 8
+    assert len(list((tmp_path / "figures").glob("*.png"))) == 8
+
+
+def test_the_share_table_has_every_model_and_the_patch_count(setting):
+    _, _, combined, _ = run(setting)
+    table = phase2_eval.table_by_share(combined, "L1C")
+    assert list(table.columns) == ["patches"] + [
+        phase2_eval.LABELS[m] for m in (*phase2_eval.PUBLISHED, *phase2_eval.TRAINED)
+    ]
+    assert (table["patches"].groupby(level="experiment").sum() == 20).all()
+    assert table.drop(columns="patches").max().max() <= 100
+
 
 
 def test_the_cache_and_the_remote_file_give_the_same_published_boa(setting, tmp_path):

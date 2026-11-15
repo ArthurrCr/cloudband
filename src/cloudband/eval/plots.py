@@ -81,161 +81,6 @@ def _quiet(ax, axis: str = "x") -> None:
         ax.xaxis.set_major_locator(MaxNLocator(nbins=5))
 
 
-def _comparison_label(title: str) -> str:
-    name = title.split(",")[0].replace(" alone", "")
-    return name.replace(" vs ", " − ")
-
-
-def plot_paired_differences(
-    tables_by_level: Mapping[str, Mapping[str, pd.DataFrame]],
-    comparisons: Sequence[str],
-    title: str,
-    labels: Mapping[str, str] | None = None,
-) -> Figure:
-    """Mean paired difference and its 95% interval, in BOA points, per comparison.
-
-    tables_by_level maps a level name ("L1C", "L2A") to evaluation.report's output.
-    Each comparison is a key of those reports; a difference above zero favours the
-    model named first. The first level is drawn filled, the second hollow.
-    """
-    styles = (("o", INK, INK), ("o", MUTED, "white"), ("s", MUTED, MUTED))
-    if len(tables_by_level) > len(styles):
-        raise ValueError(f"at most {len(styles)} levels")
-    count = len(comparisons)
-    offsets = [0.0] if len(tables_by_level) == 1 else [
-        0.16 - 0.32 * i / (len(tables_by_level) - 1) for i in range(len(tables_by_level))
-    ]
-
-    fig, axes = plt.subplots(1, 3, figsize=(13, 0.62 * count + 1.8), sharey=True)
-    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
-        ax.axvline(0, color=MUTED, linewidth=1, zorder=1)
-        for (level, tables), offset, (marker, edge, face) in zip(
-            tables_by_level.items(), offsets, styles
-        ):
-            for row, name in enumerate(comparisons):
-                y = count - 1 - row + offset
-                line = tables[name].loc[experiment]
-                mean = line["mean diff"] * 100
-                low, high = line["ci95 low"] * 100, line["ci95 high"] * 100
-                ax.plot([low, high], [y, y], color=edge, linewidth=2,
-                        solid_capstyle="round", zorder=2)
-                ax.scatter([mean], [y], marker=marker, s=60, color=face, edgecolor=edge,
-                           linewidth=2, zorder=3, label=level if row == 0 else None)
-                ax.annotate(f"{mean:+.2f}", (high, y), xytext=(6, 0), textcoords="offset points",
-                            va="center", fontsize=8, color=edge)
-        low, high = ax.get_xlim()
-        ax.set_xlim(low, high + 0.15 * (high - low))
-        ax.set_title(experiment, color=INK, fontsize=11)
-        ax.set_xlabel("difference in BOA (points)", color=MUTED)
-        ax.set_ylim(-0.6, count - 0.4)
-        _quiet(ax)
-    axes[0].set_yticks(
-        list(range(count))[::-1],
-        [(labels or {}).get(c, _comparison_label(c)) for c in comparisons],
-        color=INK,
-    )
-    if len(tables_by_level) > 1:
-        handles, labels = axes[0].get_legend_handles_labels()
-        fig.legend(handles, labels, frameon=False, loc="upper right",
-                   ncol=len(tables_by_level), labelcolor=INK, fontsize=9)
-    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, "dot: mean difference per ROI, averaged over seeds  ·  "
-             "line: 95% interval resampling ROIs  ·  right of zero favours the first model",
-             color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.04, 1, 0.97))
-    plt.close(fig)
-    return fig
-
-
-def plot_unit_differences(
-    differences: pd.DataFrame, name_a: str, name_b: str, title: str, unit: str = "ROIs"
-) -> Figure:
-    """Histogram of the per-unit difference A − B, one panel per experiment.
-
-    Bars right of zero (A better) are blue, left of zero (B better) orange, and the
-    bar holding zero gray, with the share of units where A is better written above.
-    """
-    fig, axes = plt.subplots(1, 3, figsize=(13, 3.6), sharey=True)
-    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
-        values = differences[experiment].dropna().to_numpy() * 100
-        reach = max(float(np.percentile(np.abs(values), 99)), 0.5)
-        width = reach / 12
-        edges = np.arange(-12.5, 13.5) * width
-        heights, _ = np.histogram(np.clip(values, edges[0], edges[-1]), bins=edges)
-        centers = (edges[:-1] + edges[1:]) / 2
-        colors = [
-            REFERENCE if abs(c) < width / 2 else (OCM_COLOR if c > 0 else SWIN_COLOR)
-            for c in centers
-        ]
-        ax.bar(centers, heights, width=width * 0.86, color=colors, linewidth=0)
-        ax.axvline(0, color=MUTED, linewidth=1)
-        better = float((values > 0).mean()) * 100
-        ax.set_title(experiment, color=INK, fontsize=11)
-        ax.text(0.98, 0.95, f"{name_a} better in {better:.0f}% of {len(values)} {unit}",
-                transform=ax.transAxes, ha="right", va="top", fontsize=9, color=INK,
-                bbox={"facecolor": "white", "edgecolor": "none", "pad": 2}, zorder=4)
-        ax.set_xlabel(f"{name_a} − {name_b}, BOA points", color=MUTED)
-        _quiet(ax, axis="y")
-    axes[0].set_ylabel(unit, color=MUTED)
-    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, f"blue: {name_a} better  ·  orange: {name_b} better  ·  gray: the bar around zero  ·  "
-             "values past the edges are counted in the outermost bars",
-             color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.04, 1, 1))
-    plt.close(fig)
-    return fig
-
-
-def plot_unit_scatter(
-    trained: Mapping[str, pd.DataFrame],
-    reference: pd.DataFrame,
-    reference_label: str,
-    title: str,
-    unit: str = "ROIs",
-) -> Figure:
-    """BOA per unit of each trained model (y) against the reference model (x).
-
-    One row of panels per trained model, one column per experiment. A point above
-    the diagonal is a unit where the trained model does better.
-    """
-    names = list(trained)
-    fig, axes = plt.subplots(len(names), 3, figsize=(13, 4.3 * len(names)), squeeze=False)
-    for row_axes, name in zip(axes, names):
-        color = _model_color(name.lower())
-        for ax, experiment in zip(row_axes, EXPERIMENT_ORDER):
-            joined = pd.DataFrame(
-                {"x": reference[experiment], "y": trained[name][experiment]}
-            ).dropna() * 100
-            low = float(min(joined["x"].quantile(0.01), joined["y"].quantile(0.01)))
-            low = max(0.0, low - 2)
-            ax.plot([low, 100], [low, 100], color=MUTED, linewidth=1, zorder=1)
-            ax.scatter(joined["x"].clip(lower=low), joined["y"].clip(lower=low), s=16,
-                       color=color, alpha=0.55, linewidth=0, zorder=2)
-            above = float((joined["y"] > joined["x"]).mean()) * 100
-            ax.text(0.03, 0.97, f"{name} better in {above:.0f}% of {len(joined)} {unit}",
-                    transform=ax.transAxes, ha="left", va="top", fontsize=9, color=INK)
-            ax.set_xlim(low, 100.5)
-            ax.set_ylim(low, 100.5)
-            ax.set_aspect("equal")
-            ax.set_title(experiment, color=INK, fontsize=11)
-            ax.set_xlabel(f"{reference_label} BOA (%)", color=MUTED)
-            ax.set_ylabel(f"{name} BOA (%)", color=MUTED)
-            for spine in ("top", "right"):
-                ax.spines[spine].set_visible(False)
-            for spine in ("left", "bottom"):
-                ax.spines[spine].set_color(MUTED)
-            ax.tick_params(colors=MUTED, length=0)
-            ax.grid(color=GRID, linewidth=0.8)
-            ax.set_axisbelow(True)
-    fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, "one point per ROI  ·  above the diagonal: the trained model does "
-             "better  ·  points below the axis range are drawn at its edge",
-             color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.03, 1, 1))
-    plt.close(fig)
-    return fig
-
-
 def plot_all_models(
     seed_table: pd.DataFrame,
     groups: Sequence[Sequence[str]],
@@ -301,56 +146,82 @@ def plot_all_models(
     return fig
 
 
-def plot_versus_references(
-    tables: Mapping[str, pd.DataFrame],
-    models: Mapping[str, str],
-    references: Sequence[str],
+# Bars of the share figure: the published versions as a gray ramp (1.0 light to
+# 4.0 dark), the trained OCM as a blue ramp (each backbone light, the ensemble
+# dark), Swin orange.
+PUBLISHED_RAMP = ("#d3d2cc", "#b0afa8", "#8a8984", "#5f5e59")
+OCM_RAMP = {"regnety": "#86b6ef", "convnext": "#5598e7", "ocm": "#1c5cab"}
+CHANCE_BOA = 50.0
+
+
+def share_colors(models: Sequence[str]) -> dict[str, str]:
+    """Bar colour of each model of the share figure, by family."""
+    published = [m for m in models if "published" in m]
+    colors = {m: PUBLISHED_RAMP[min(i, len(PUBLISHED_RAMP) - 1)] for i, m in enumerate(published)}
+    for model in models:
+        if model == "swin":
+            colors[model] = SWIN_COLOR
+        elif model in OCM_RAMP:
+            colors[model] = OCM_RAMP[model]
+    return colors
+
+
+def plot_boa_by_share(
+    table: pd.DataFrame,
+    models: Sequence[str],
     labels: Mapping[str, str],
     title: str,
 ) -> Figure:
-    """Each trained model minus each reference model, per unit, with its 95% interval.
+    """BOA of every model in each range of class share, for one experiment.
 
-    tables is one level's evaluation.report output, holding "{model} vs {reference},
-    per ROI" for every key of models and every reference. One row per reference; the
-    trained models are drawn side by side in each row, in their own colours, with the
-    difference written next to the dot.
+    table is one experiment of evaluation.boa_by_share, indexed by (bin, model), with
+    the patch count n, the mean BOA and its SD across seeds. One group of bars per
+    range, one bar per model in the given order, the number of patches under each
+    group. Bars start at 50%, the BOA of a classifier that guesses; a model with
+    seeds carries a line of one SD.
     """
-    names = list(models)
-    offsets = [0.0] if len(names) == 1 else [
-        0.18 - 0.36 * i / (len(names) - 1) for i in range(len(names))
-    ]
-    rows = list(range(len(references)))[::-1]
+    bins = list(dict.fromkeys(table.index.get_level_values(0)))
+    colors = share_colors(models)
+    width = 0.84 / len(models)
+    means = table["mean"] * 100
+    lowest = float(np.nanmin(means.to_numpy())) if means.notna().any() else CHANCE_BOA
+    bottom = min(CHANCE_BOA, np.floor(lowest - 2))
 
-    fig, axes = plt.subplots(1, 3, figsize=(14, 0.95 * len(references) + 1.9), sharey=True)
-    for ax, experiment in zip(axes, EXPERIMENT_ORDER):
-        ax.axvline(0, color=MUTED, linewidth=1, zorder=1)
-        for name, offset in zip(names, offsets):
-            color = _model_color(name.lower())
-            for y, reference in zip(rows, references):
-                line = tables[f"{name} vs {reference}, per ROI"].loc[experiment]
-                mean = line["mean diff"] * 100
-                low, high = line["ci95 low"] * 100, line["ci95 high"] * 100
-                ax.plot([low, high], [y + offset] * 2, color=color, linewidth=2.5,
-                        solid_capstyle="round", zorder=2)
-                ax.scatter([mean], [y + offset], s=60, color=color, edgecolor="white",
-                           linewidth=1.5, zorder=3, label=models[name] if y == rows[0] else None)
-                ax.annotate(f"{mean:+.2f}", (high, y + offset), xytext=(6, 0),
-                            textcoords="offset points", va="center", fontsize=8, color=INK)
-        low, high = ax.get_xlim()
-        ax.set_xlim(low, high + 0.18 * (high - low))
-        ax.set_ylim(-0.6, len(references) - 0.4)
-        ax.set_title(experiment, color=INK, fontsize=11)
-        ax.set_xlabel("difference in BOA (points)", color=MUTED)
-        _quiet(ax)
-    axes[0].set_yticks(rows, [f"vs {labels.get(r, r)}" for r in references], color=INK)
-    handles, legend = axes[0].get_legend_handles_labels()
-    fig.legend(handles, legend, frameon=False, loc="upper right", ncol=len(names),
-               labelcolor=INK, fontsize=9)
+    fig, ax = plt.subplots(figsize=(13, 5.2))
+    for index, model in enumerate(models):
+        positions, heights, spreads = [], [], []
+        for group, bin_label in enumerate(bins):
+            if (bin_label, model) not in table.index:
+                continue
+            row = table.loc[(bin_label, model)]
+            if np.isnan(row["mean"]):
+                continue
+            positions.append(group - 0.42 + width * (index + 0.5))
+            heights.append(row["mean"] * 100 - bottom)
+            spreads.append(0.0 if np.isnan(row["sd"]) else row["sd"] * 100)
+        ax.bar(positions, heights, width=width, bottom=bottom, color=colors[model],
+               edgecolor="white", linewidth=1, label=labels.get(model, model), zorder=2)
+        if any(spreads):
+            tops = [bottom + h for h in heights]
+            ax.errorbar(positions, tops, yerr=spreads, fmt="none", ecolor=INK,
+                        elinewidth=1, capsize=0, zorder=3)
+    sizes = table.groupby(level=0, sort=False)["n"].first()
+    ax.set_xticks(range(len(bins)),
+                  [f"{b}\nn = {int(sizes[b])} patches" for b in bins], color=INK)
+    ax.set_xlim(-0.55, len(bins) - 0.45)
+    ax.set_ylim(bottom, 100)
+    ax.set_ylabel("BOA (%)", color=MUTED)
+    ax.set_xlabel("share of the patch's annotated pixels in the class", color=MUTED)
+    _quiet(ax, axis="y")
+    ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
+    ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0), labelcolor=INK,
+              fontsize=9)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
-    fig.text(0.01, 0.005, "dot: mean difference per ROI, averaged over seeds  ·  line: 95% "
-             "interval resampling ROIs  ·  right of zero: the trained model does better",
+    fig.text(0.01, 0.005, f"bars start at {bottom:g}% (50% is a classifier that guesses)  ·  "
+             "trained models: mean of the 5 seeds, line = ± one SD  ·  "
+             "BOA of a range from the summed counts of its patches",
              color=MUTED, fontsize=8.5)
-    fig.tight_layout(rect=(0, 0.03, 1, 0.96))
+    fig.tight_layout(rect=(0, 0.03, 1, 1))
     plt.close(fig)
     return fig
 
