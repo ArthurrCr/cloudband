@@ -342,7 +342,7 @@ rectangle or an edge is.
 
 ## D17. The 509 window was cropped from the wrong side
 
-Status: fixed in the reader (CROP_REVISION 2). Whether to retrain is open; see below.
+Status: fixed in the reader (CROP_REVISION 2). The networks are not retrained (decision of 15/11/2026, below); the test is scored again with the fixed crop.
 
 The dataset README says the 509 pixel patches are padded to 512 with zeros on the left and
 bottom. The rasters carry the padding on the right and bottom: a plot of the full 512
@@ -364,7 +364,22 @@ dropped pixels are not all zero, on every read. Counts are saved under a name th
 the crop revision, and the local cache under a folder that does, so nothing scored with the
 old crop is read back; the test evaluation is scored again.
 
-Open: the trained networks saw the strip during training (0.59% of the pixels, image zeros
-labelled clear) and lost three real columns per patch. The test no longer contains it. The
-comparison between the two architectures stays even, since both trained on the same data;
-retraining would remove the defect from the training data too.
+Decision on training (15/11/2026): the networks are kept, not retrained. Retraining means
+the fifteen runs again, and the time is not there. What this leaves, and why it is accepted:
+
+- Training and validation used the old crop. Every patch carried the three padding columns
+  (image zeros, label clear; 1,527 pixels, 0.59% of the patch) and lacked its first three
+  real columns. Model selection, by validation cross-entropy, saw the same.
+- Both architectures trained, and were selected, on exactly these patches, so the comparison
+  between them stays even: the defect is a shared feature of their training data, not a
+  difference between them.
+- The test is read with the fixed crop: it holds no padding, and every pixel scored is a
+  real, annotated pixel. A model's reaction to an all-zero input no longer counts anywhere.
+- The published OmniCloudMask versions are scored on the same fixed patches, so the
+  reference no longer gains from the strip either.
+
+What to state when reporting: the networks were trained on 509 patches cropped with the
+padding on the wrong side (three padding columns labelled clear kept, three real columns
+lost, 0.59% of each patch), the same for both; evaluation used the correct crop. Results
+from before the fix (files without `crop2` in their name) are not comparable and are not
+used.
