@@ -344,6 +344,9 @@ rectangle or an edge is.
 
 Status: fixed in the reader (CROP_REVISION 2). The networks are not retrained (decision of 15/11/2026, below); the test is scored again with the fixed crop.
 
+The full verification (hypotheses tested, counts, evidence, references, how to reproduce) is
+in `docs/AUDIT.md`, A1; what it leaves for reporting is in `docs/LIMITATIONS.md`, L1.
+
 The dataset README says the 509 pixel patches are padded to 512 with zeros on the left and
 bottom. The rasters carry the padding on the right and bottom: a plot of the full 512
 canvas (the earlier project's `baseline.ipynb`) shows the black strips there. The reader

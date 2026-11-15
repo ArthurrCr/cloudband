@@ -449,3 +449,31 @@ def boa_by_share(
             sizes = grouped.count().groupby(level=["experiment", "bin"]).max().rename("n")
     table = _across_seeds(per_seed).join(sizes, on=["experiment", "bin"])
     return table[["n", *[c for c in table.columns if c != "n"]]]
+
+
+def clear_pixel_audit(counts: pd.DataFrame) -> pd.Series:
+    """How many clear pixels the patches carry, to catch padding kept as data.
+
+    Padding kept by a wrong crop is labelled clear and has a fixed size, so it shows
+    as a floor under every patch's clear count and as many patches with exactly that
+    count. With the 509 window and three padding columns that is 3 x 509 = 1,527.
+    Uses one model's rows; the clear count depends on the annotation only.
+    """
+    first = counts["model"].iloc[0]
+    clear = counts[(counts["model"] == first) & (counts["experiment"] == "clear")]
+    pixels = (clear["tp"] + clear["fn"]).astype(int)
+    annotated = clear[list(COUNTS)].sum(axis=1).astype(int)
+    common = pixels[pixels < annotated].value_counts()
+    return pd.Series({
+        "patches": len(pixels),
+        "annotated pixels per patch, min": int(annotated.min()),
+        "annotated pixels per patch, max": int(annotated.max()),
+        "fewest clear pixels": int(pixels.min()),
+        "patches with no clear pixel": int((pixels == 0).sum()),
+        "patches with only clear pixels": int((pixels == annotated).sum()),
+        "patches with exactly 3 x 509 clear pixels": int((pixels == 3 * 509).sum()),
+        "most repeated clear count (patches not fully clear)":
+            int(common.index[0]) if len(common) else 0,
+        "patches with that count": int(common.iloc[0]) if len(common) else 0,
+    })
+

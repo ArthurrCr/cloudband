@@ -274,3 +274,17 @@ def test_the_median_table_follows_the_cloudsen12_convention():
     )
     assert "median per patch, per seed" in evaluation.report(counts_by_seed)
 
+
+
+def test_the_clear_pixel_audit_finds_padding_kept_as_clear():
+    counts = score(samples(count=10))
+    clean = evaluation.clear_pixel_audit(counts)
+    assert clean["patches"] == 10
+
+    padded = counts.copy()
+    clear = padded["experiment"] == "clear"
+    # 3 x 509 pixels of padding labelled clear, taken from the cloud side of each patch
+    padded.loc[clear, "fn"] += 3 * 509
+    audit = evaluation.clear_pixel_audit(padded)
+    assert audit["fewest clear pixels"] >= 3 * 509
+    assert audit["patches with no clear pixel"] == 0
