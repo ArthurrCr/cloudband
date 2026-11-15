@@ -176,13 +176,14 @@ def plot_boa_by_share(
     table is one experiment of evaluation.boa_by_share, indexed by (bin, model), with
     the patch count n, the mean BOA and its SD across seeds. One group of bars per
     range, one bar per model in the given order, the number of patches under each
-    group. The axis runs from 0 to 100%; a model with seeds carries a line of one SD.
+    group, and the BOA written above each bar. The axis runs from 0 to 100%; a model
+    with seeds carries a line of one SD.
     """
     bins = list(dict.fromkeys(table.index.get_level_values(0)))
     colors = share_colors(models)
     width = 0.84 / len(models)
 
-    fig, ax = plt.subplots(figsize=(13, 5.2))
+    fig, ax = plt.subplots(figsize=(14, 6))
     for index, model in enumerate(models):
         positions, heights, spreads = [], [], []
         for group, bin_label in enumerate(bins):
@@ -199,15 +200,19 @@ def plot_boa_by_share(
         if any(spreads):
             ax.errorbar(positions, heights, yerr=spreads, fmt="none", ecolor=INK,
                         elinewidth=1, capsize=0, zorder=3)
+        for position, height, spread in zip(positions, heights, spreads):
+            ax.annotate(f"{height:.2f}", (position, height + spread), xytext=(0, 3),
+                        textcoords="offset points", ha="center", va="bottom", rotation=90,
+                        fontsize=7.5, color=INK)
     sizes = table.groupby(level=0, sort=False)["n"].first()
     ax.set_xticks(range(len(bins)),
                   [f"{b}\nn = {int(sizes[b])} patches" for b in bins], color=INK)
     ax.set_xlim(-0.55, len(bins) - 0.45)
-    ax.set_ylim(0, 100)
+    ax.set_ylim(0, 112)
+    ax.set_yticks(range(0, 101, 20))
     ax.set_ylabel("BOA (%)", color=MUTED)
     ax.set_xlabel("share of the patch's annotated pixels in the class", color=MUTED)
     _quiet(ax, axis="y")
-    ax.yaxis.set_major_locator(MaxNLocator(nbins=6))
     ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0), labelcolor=INK,
               fontsize=9)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
