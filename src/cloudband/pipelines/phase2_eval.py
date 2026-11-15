@@ -228,6 +228,17 @@ def score_published(
     return published
 
 
+def crop_check(published: Mapping[str, pd.DataFrame]) -> pd.DataFrame:
+    """evaluation.clear_pixel_audit of each level (DIVERGENCES D17, docs/AUDIT.md A1).
+
+    With the right crop no patch is held above a floor of clear pixels and no count
+    repeats across many cloudy patches; with padding kept, both happen.
+    """
+    return pd.DataFrame(
+        {LEVELS[split]: evaluation.clear_pixel_audit(frame) for split, frame in published.items()}
+    )
+
+
 def score_trained(
     cache: LocalCache,
     tables: Mapping[str, pd.DataFrame],
