@@ -117,8 +117,14 @@ def test_the_tables_are_in_points_and_name_every_model(setting):
         phase2_eval.LABELS[m] for m in (*phase2_eval.PUBLISHED, *phase2_eval.TRAINED)
     ]
     assert everything["mean"].max() > 1   # percent, not a fraction
-    expected = evaluation.pooled_boa(run(setting)[0]["test"]).loc["ocm published 4.0", "cloud"]
-    assert everything.loc[("OCM published 4.0", "cloud"), "mean"] == pytest.approx(expected * 100)
+    # the same median BOA as the CloudSEN12 paper table of the published model
+    published = run(setting)[0]
+    paper = phase2_eval.published_cloudsen12_tables(published)
+    for experiment, row in (("cloud", "cloud/no cloud"), ("shadow", "cloud shadow"),
+                            ("clear", "valid/invalid")):
+        assert everything.loc[("OCM published 4.0", experiment), "mean"] == pytest.approx(
+            paper.loc[("L1C", "OCM published 4.0", row), "median_boa"], abs=0.0051
+        )   # the paper table is rounded to two decimals
 
     swin = phase2_eval.table_ocm_vs_swin(reports, "L1C")
     raw = reports["L1C"]["OCM vs Swin, per ROI"]
@@ -167,7 +173,9 @@ def test_the_share_table_has_every_model_and_the_patch_count(setting):
     assert list(table.columns) == ["patches"] + [
         phase2_eval.LABELS[m] for m in (*phase2_eval.PUBLISHED, *phase2_eval.TRAINED)
     ]
-    assert (table["patches"].groupby(level="experiment").sum() == 20).all()
+    per_patch = evaluation.unit_boa(combined["test"][0], "scene").loc["swin"]
+    defined = per_patch.notna().sum()
+    assert (table["patches"].groupby(level="experiment").sum() == defined).all()
     assert table.drop(columns="patches").max().max() <= 100
 
 

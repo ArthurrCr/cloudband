@@ -231,19 +231,34 @@ def test_the_class_share_is_the_positive_side_of_each_experiment():
         evaluation.class_share(broken)
 
 
-def test_boa_by_share_counts_every_patch_once_and_pools_each_range():
+def test_boa_by_share_is_the_median_over_the_patches_with_a_defined_boa():
     data = samples(count=30)
     counts_by_seed = {0: score(data), 1: score(data, models(truth_seed=1))}
     table = evaluation.boa_by_share(counts_by_seed)
 
-    sizes = table["n"].groupby(level=["experiment", "bin"]).first()
-    assert (sizes.groupby(level="experiment").sum() == 30).all()
-
     binned = evaluation.share_bin(evaluation.class_share(counts_by_seed[0]))
     frame = counts_by_seed[1].join(binned, on=["scene", "experiment"])
-    some_bin = table.loc["cloud"].index.get_level_values(0)[0]
-    part = frame[(frame.experiment == "cloud") & (frame.bin == some_bin) & (frame.model == "ocm")]
-    expected = evaluation.boa(part[["tp", "tn", "fp", "fn"]].sum().to_frame().T).iloc[0]
-    assert table.loc[("cloud", some_bin, "ocm"), "seed 1"] == pytest.approx(expected)
+    frame["boa"] = evaluation.boa(frame)
+    for (experiment, bin_label, model), row in table.iterrows():
+        part = frame[(frame.experiment == experiment) & (frame.bin == bin_label)
+                     & (frame.model == model)]
+        assert row["n"] == part["boa"].notna().sum()
+        assert row["seed 1"] == pytest.approx(part["boa"].median())
+    sizes = table["n"].groupby(level=["experiment", "bin"]).first()
+    assert (sizes.groupby(level="experiment").sum() <= 30).all()
     assert list(table.columns[:3]) == ["n", "mean", "sd"]
+
+
+def test_the_median_table_follows_the_cloudsen12_convention():
+    data = samples(count=30)
+    counts_by_seed = {0: score(data), 1: score(data, models(truth_seed=1))}
+    table = evaluation.median_table(counts_by_seed)
+
+    per_patch = evaluation.unit_boa(counts_by_seed[1], "scene").loc["swin"]
+    assert table.loc[("swin", "shadow"), "seed 1"] == pytest.approx(per_patch["shadow"].median())
+    assert table.loc[("swin", "shadow"), "n"] == per_patch["shadow"].notna().sum()
+    assert table.loc[("swin", "shadow"), "mean"] == pytest.approx(
+        table.loc[("swin", "shadow"), ["seed 0", "seed 1"]].mean()
+    )
+    assert "median per patch, per seed" in evaluation.report(counts_by_seed)
 

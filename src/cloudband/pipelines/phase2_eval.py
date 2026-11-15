@@ -373,8 +373,8 @@ def _in_points(table: pd.DataFrame) -> pd.DataFrame:
 
 
 def table_all_models(reports, level: str) -> pd.DataFrame:
-    """Whole-split BOA (percent) of every model: the seeds, their mean and SD."""
-    table = _in_points(reports[level]["whole split, per seed"])
+    """Median BOA per patch (percent) of every model: the seeds, their mean and SD."""
+    table = _in_points(reports[level]["median per patch, per seed"])
     order = [m for m in (*PUBLISHED, *TRAINED) if m in table.index.get_level_values(0)]
     table = table.reindex(order, level=0)
     return table.rename(index=LABELS, level=0)
@@ -418,13 +418,13 @@ def level_agreement(reports, title: str = VERSUS_SWIN[0]):
 
 def figure_all_models(reports, level: str) -> Figure:
     """Where every model stands: the four published versions and the trained models."""
-    table = reports[level]["whole split, per seed"]
+    table = reports[level]["median per patch, per seed"]
     present = set(table.index.get_level_values(0))
     published = [m for m in PUBLISHED if m in present]
     trained = [m for m in TRAINED if m in present]
     return plots.plot_all_models(
         table, [published, trained], LABELS,
-        f"Whole-split BOA of every model, {level} test",
+        f"Median BOA per patch of every model, {level} test",
     )
 
 
@@ -434,7 +434,11 @@ def _share_models(by_seed) -> list[str]:
 
 
 def table_by_share(combined, level: str) -> pd.DataFrame:
-    """Mean BOA (percent) of every model in each range of class share, per experiment."""
+    """Median BOA per patch (percent) of every model in each range of class share.
+
+    The value is the mean over seeds of each seed's median; patches counts the
+    patches with a defined BOA in the range.
+    """
     by_seed = combined[SPLITS[level]]
     table = evaluation.boa_by_share(by_seed)
     wide = (table["mean"] * 100).unstack("model")[_share_models(by_seed)]

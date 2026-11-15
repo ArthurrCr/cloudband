@@ -173,20 +173,50 @@ def unit_boa(counts: pd.DataFrame, unit: str) -> pd.DataFrame:
 
 
 def pooled_boa(counts: pd.DataFrame) -> pd.DataFrame:
-    """BOA of the whole split per model: every patch's counts summed, as papers report."""
+    """BOA of the whole split per model, from every patch's counts summed.
+
+    Not the CloudSEN12 convention, which takes the median of the per-patch BOA
+    (median_table); kept as a second view of the same counts.
+    """
     summed = counts.groupby(["model", "experiment"])[list(COUNTS)].sum()
     return boa(summed).unstack("experiment")[list(EXPERIMENTS)]
 
 
-def seed_table(counts_by_seed: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
-    """Whole-split BOA of every model and experiment: each seed, their mean and SD."""
-    per_seed = {seed: pooled_boa(frame).stack() for seed, frame in counts_by_seed.items()}
+def _across_seeds(per_seed: Mapping[str, pd.Series]) -> pd.DataFrame:
+    """One column per seed, with their mean and SD in front."""
     table = pd.DataFrame(per_seed)
-    table.columns = [f"seed {seed}" for seed in table.columns]
     values = table.to_numpy()
     table.insert(0, "sd", values.std(axis=1, ddof=1) if values.shape[1] > 1 else np.nan)
     table.insert(0, "mean", values.mean(axis=1))
+    return table
+
+
+def seed_table(counts_by_seed: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
+    """Whole-split BOA (summed counts) of every model and experiment, per seed."""
+    table = _across_seeds(
+        {f"seed {seed}": pooled_boa(frame).stack() for seed, frame in counts_by_seed.items()}
+    )
     table.index.names = ["model", "experiment"]
+    return table
+
+
+def median_table(counts_by_seed: Mapping[int, pd.DataFrame]) -> pd.DataFrame:
+    """Median BOA per patch of every model and experiment, per seed (CloudSEN12 convention).
+
+    As Aybar et al. (2022), Table 6: the BOA of each patch, then the median over the
+    patches where it is defined, that is, holding both the class and its complement.
+    n is how many patches that is; it depends on the annotation only.
+    """
+    per_patch = {seed: unit_boa(frame, "scene") for seed, frame in counts_by_seed.items()}
+    table = _across_seeds(
+        {
+            f"seed {seed}": boa_per_patch.groupby(level="model").median().stack()
+            for seed, boa_per_patch in per_patch.items()
+        }
+    )
+    table.index.names = ["model", "experiment"]
+    defined = next(iter(per_patch.values())).notna().groupby(level="model").sum().stack()
+    table.insert(0, "n", defined.reindex(table.index).astype(int))
     return table
 
 
@@ -289,6 +319,7 @@ def report(
     if isinstance(published, str):
         published = (published,)
     tables = {
+        "median per patch, per seed": median_table(counts_by_seed),
         "whole split, per seed": seed_table(counts_by_seed),
         "OCM vs Swin, per ROI": paired_comparison(counts_by_seed, "ocm", "swin", "roi"),
         "OCM vs Swin, per patch": paired_comparison(counts_by_seed, "ocm", "swin", "scene"),
@@ -373,31 +404,21 @@ def share_bin(share: pd.Series, bins: Sequence[float] = SHARE_BINS) -> pd.Series
 def boa_by_share(
     counts_by_seed: Mapping[int, pd.DataFrame], bins: Sequence[float] = SHARE_BINS
 ) -> pd.DataFrame:
-    """BOA of every model in each range of class share, per experiment.
+    """Median BOA per patch of every model in each range of class share, per experiment.
 
-    Patches are grouped by the share of the experiment's class in them, and the BOA
-    of a group comes from its summed counts, as for the whole split; a patch without
-    the class still adds to the specificity. Returns, per (experiment, bin, model),
-    the number of patches n, each seed's BOA, their mean and SD.
+    Patches are grouped by the share of the experiment's class in them; within a
+    range, the BOA follows the CloudSEN12 convention: the median of the per-patch BOA
+    over the patches where it is defined. Returns, per (experiment, bin, model), the
+    number of those patches n, each seed's median, their mean and SD.
     """
     frames = list(counts_by_seed.values())
     binned = share_bin(class_share(frames[0]), bins)
     per_seed, sizes = {}, None
     for seed, frame in counts_by_seed.items():
-        frame = frame.join(binned, on=["scene", "experiment"])
-        summed = frame.groupby(["experiment", "bin", "model"], observed=True)[list(COUNTS)].sum()
-        per_seed[f"seed {seed}"] = boa(summed)
+        frame = frame.join(binned, on=["scene", "experiment"]).assign(boa=boa(frame))
+        grouped = frame.groupby(["experiment", "bin", "model"], observed=True)["boa"]
+        per_seed[f"seed {seed}"] = grouped.median()
         if sizes is None:
-            sizes = (
-                frame.drop_duplicates(["scene", "experiment"])
-                .groupby(["experiment", "bin"], observed=True)
-                .size()
-                .rename("n")
-            )
-    table = pd.DataFrame(per_seed)
-    values = table.to_numpy()
-    table.insert(0, "sd", values.std(axis=1, ddof=1) if values.shape[1] > 1 else np.nan)
-    table.insert(0, "mean", values.mean(axis=1))
-    table = table.join(sizes, on=["experiment", "bin"])
+            sizes = grouped.count().groupby(level=["experiment", "bin"]).max().rename("n")
+    table = _across_seeds(per_seed).join(sizes, on=["experiment", "bin"])
     return table[["n", *[c for c in table.columns if c != "n"]]]
-

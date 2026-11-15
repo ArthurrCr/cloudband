@@ -86,8 +86,9 @@ def plot_all_models(
     groups: Sequence[Sequence[str]],
     labels: Mapping[str, str],
     title: str,
+    metric_label: str = "Median BOA per patch (%)",
 ) -> Figure:
-    """Whole-split BOA of every model on one axis per experiment.
+    """BOA of every model on one axis per experiment.
 
     seed_table is evaluation.seed_table's output, indexed by (model, experiment).
     groups lists the models top to bottom in blocks (the published versions, then the
@@ -133,7 +134,7 @@ def plot_all_models(
         ax.set_xlim(lowest - pad, highest + pad * 3)
         ax.set_ylim(-0.6, top + 0.6)
         ax.set_title(experiment, color=INK, fontsize=11)
-        ax.set_xlabel("BOA (%)", color=MUTED)
+        ax.set_xlabel(metric_label, color=MUTED)
         _quiet(ax)
     axes[0].set_yticks([top - rows[m] for m in order], [labels.get(m, m) for m in order],
                        color=INK)
@@ -174,7 +175,7 @@ def plot_boa_by_share(
     """BOA of every model in each range of class share, for one experiment.
 
     table is one experiment of evaluation.boa_by_share, indexed by (bin, model), with
-    the patch count n, the mean BOA and its SD across seeds. One group of bars per
+    the patch count n, the mean over seeds of the median BOA per patch and its SD. One group of bars per
     range, one bar per model in the given order, the number of patches under each
     group, and the BOA written above each bar. The axis runs from 0 to 100%; a model
     with seeds carries a line of one SD.
@@ -210,14 +211,15 @@ def plot_boa_by_share(
     ax.set_xlim(-0.55, len(bins) - 0.45)
     ax.set_ylim(0, 112)
     ax.set_yticks(range(0, 101, 20))
-    ax.set_ylabel("BOA (%)", color=MUTED)
+    ax.set_ylabel("Median BOA per patch (%)", color=MUTED)
     ax.set_xlabel("share of the patch's annotated pixels in the class", color=MUTED)
     _quiet(ax, axis="y")
     ax.legend(frameon=False, loc="upper left", bbox_to_anchor=(1.0, 1.0), labelcolor=INK,
               fontsize=9)
     fig.suptitle(title, color=INK, fontsize=12, x=0.01, ha="left")
     fig.text(0.01, 0.005, "trained models: mean of the 5 seeds, line = ± one SD  ·  "
-             "BOA of a range from the summed counts of its patches",
+             "median over the patches of the range that hold both the class and its "
+             "complement (CloudSEN12 convention); n counts those patches",
              color=MUTED, fontsize=8.5)
     fig.tight_layout(rect=(0, 0.03, 1, 1))
     plt.close(fig)
