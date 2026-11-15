@@ -34,6 +34,7 @@ from cloudband.datasets.cloudsen12 import (
     ROI_COLUMN,
     Sample,
     require_columns,
+    check_padding,
     valid_window,
 )
 from cloudband.pipelines.phase0 import RGN_INDICES
@@ -229,7 +230,7 @@ class FastReader:
         image = decode_bands(image_bytes, self.bands)
         annotation = decode_first_band(annotation_bytes)
         if crop_to_valid:
-            image = valid_window(image)
+            image = valid_window(check_padding(image))
             annotation = valid_window(annotation)
         return Sample(
             identifier=str(metadata[ID_COLUMN]),

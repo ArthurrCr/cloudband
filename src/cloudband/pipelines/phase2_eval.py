@@ -138,7 +138,13 @@ def load_members(store, seed: int, device: str) -> dict[str, torch.nn.Module]:
 
 
 def counts_path(results_dir: Path, split: str, tag: str) -> Path:
-    return Path(results_dir) / f"phase2-{PROTOCOL_REVISION}-counts-{split}-{tag}.csv"
+    """Saved counts of one split, named by protocol and crop, so a new crop scores again."""
+    from cloudband.datasets.cloudsen12 import CROP_REVISION
+
+    return (
+        Path(results_dir)
+        / f"phase2-{PROTOCOL_REVISION}-crop{CROP_REVISION}-counts-{split}-{tag}.csv"
+    )
 
 
 def load_test_tables() -> dict[str, pd.DataFrame]:
@@ -177,7 +183,9 @@ def build_test_cache(
 
     reader = FastReader()
     log(f"fast reader matches GDAL on {check_fast_reader(reader, tables)} samples")
-    cache = LocalCache(Path(directory))
+    from cloudband.datasets.cloudsen12 import CROP_REVISION
+
+    cache = LocalCache(Path(directory) / f"crop{CROP_REVISION}")
     for split, table in tables.items():
         cache.build(split, table, read_sample=reader, workers=workers, bands_selected=True)
     return cache
@@ -220,25 +228,6 @@ def score_published(
     return published
 
 
-def published_gaps(published: Mapping[str, pd.DataFrame], baseline_dir: Path) -> pd.DataFrame:
-    """Gap to the per-patch BOA phase 0 saved for each version, read from the remote file.
-
-    The same weights on the same pixels must give the same BOA, whether the patch
-    came from the remote file or from the local cache.
-    """
-    rows = []
-    for name in sorted(set(published["test"]["model"])):
-        version = float(name.rsplit(" ", 1)[1])
-        path = (
-            Path(baseline_dir) / phase0.published_model_id(version) / phase0.CLOUDSEN12_TEST
-            / "per_scene_boa.csv"
-        )
-        if path.exists():
-            gap = evaluation.legacy_check(published["test"], name, pd.read_csv(path, index_col=0))
-            rows.append({"model": LABELS[name], "largest gap": gap})
-    return pd.DataFrame(rows, columns=["model", "largest gap"])
-
-
 def score_trained(
     cache: LocalCache,
     tables: Mapping[str, pd.DataFrame],
@@ -271,18 +260,6 @@ def score_trained(
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
     return counts
-
-
-def legacy_gaps(counts: Mapping[int, pd.DataFrame], results_dir: Path) -> pd.DataFrame:
-    """Gap to the per-patch BOA saved by the scoring used before, where it exists."""
-    rows = []
-    for seed, frame in counts.items():
-        for model in ("ocm", "swin"):
-            path = Path(results_dir) / f"{model}_shared_per_scene_boa_seed{seed}.csv"
-            if path.exists():
-                gap = evaluation.legacy_check(frame, model, pd.read_csv(path, index_col=0))
-                rows.append({"seed": seed, "model": model, "largest gap": gap})
-    return pd.DataFrame(rows, columns=["seed", "model", "largest gap"])
 
 
 # ---- published versions alone ---------------------------------------------------

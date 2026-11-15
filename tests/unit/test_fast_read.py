@@ -49,9 +49,11 @@ class Archive:
         self.blob = bytearray(b"HEADER-JUNK" * 100)
         self.entries = []
         for _ in range(n):
-            image = rng.integers(0, 60, (13, CANVAS, CANVAS)).astype(np.uint16)
+            image = rng.integers(1, 60, (13, CANVAS, CANVAS)).astype(np.uint16)
+            image[:, :, 509:] = 0          # padded with zeros on the right and bottom
+            image[:, 509:, :] = 0
             annotation = rng.integers(0, 4, (CANVAS, CANVAS)).astype(np.uint8)
-            annotation[:, :3] = 99
+            annotation[:, 509:] = 99
             image_bytes, annotation_bytes = tiff_bytes(image), tiff_bytes(annotation)
             image_at = len(self.blob)
             self.blob += image_bytes
