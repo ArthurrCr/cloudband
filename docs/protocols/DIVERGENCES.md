@@ -339,3 +339,32 @@ rectangle and the scene edge are drawn per sample here instead of once per batch
 they act on the raw values, which only exist before the per-sample normalization; and
 they come before the resolution draw rather than after it, which does not change what a
 rectangle or an edge is.
+
+## D17. The 509 window was cropped from the wrong side
+
+Status: fixed in the reader (CROP_REVISION 2). Whether to retrain is open; see below.
+
+The dataset README says the 509 pixel patches are padded to 512 with zeros on the left and
+bottom. The rasters carry the padding on the right and bottom: a plot of the full 512
+canvas (the earlier project's `baseline.ipynb`) shows the black strips there. The reader
+followed the README and kept columns 3 to 511, so every patch dropped its first three real
+columns and kept the three padding columns: image zeros, label 0 (clear), 1,527 pixels.
+
+How it showed: no test patch had fewer than 1,527 clear pixels, 67 patches had exactly that
+many, and on those 67 the published OmniCloudMask found all 1,527 (its package maps a
+zero input to class 0) while the trained models found 70–90% of them. That made the trained
+models look much worse than the published ones in the clear 0–10% range, and kept fully
+cloudy patches in that range when, without the strip, their clear BOA is undefined.
+
+What was affected: every patch read with crop_to_valid, so training, validation and test.
+The strip is 0.59% of a patch's pixels, the same for both architectures.
+
+What was done: the window is now columns 0 to 508, and check_padding refuses an image whose
+dropped pixels are not all zero, on every read. Counts are saved under a name that carries
+the crop revision, and the local cache under a folder that does, so nothing scored with the
+old crop is read back; the test evaluation is scored again.
+
+Open: the trained networks saw the strip during training (0.59% of the pixels, image zeros
+labelled clear) and lost three real columns per patch. The test no longer contains it. The
+comparison between the two architectures stays even, since both trained on the same data;
+retraining would remove the defect from the training data too.

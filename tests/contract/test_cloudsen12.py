@@ -64,13 +64,27 @@ def test_partition_check_catches_short_coverage() -> None:
         labels.verify_partition(masks, 99)
 
 
-def test_valid_window_crops_padding() -> None:
-    canvas = np.zeros((3, 512, 512), dtype=np.int16)
-    canvas[:, :, 0:3] = 7
+def test_valid_window_drops_the_padding_on_the_right_and_bottom() -> None:
+    canvas = np.full((3, 512, 512), 5, dtype=np.int16)
+    canvas[:, :, 509:512] = 7
     canvas[:, 509:512, :] = 7
     cropped = dataset.valid_window(canvas)
     assert cropped.shape == (3, 509, 509)
     assert not np.any(cropped == 7)
+    assert cropped[:, :, 0].min() == 5   # the first columns are real data and are kept
+
+
+def test_check_padding_refuses_real_data_where_the_padding_should_be() -> None:
+    canvas = np.full((3, 512, 512), 5, dtype=np.int16)
+    canvas[:, :, 509:] = 0
+    canvas[:, 509:, :] = 0
+    assert dataset.check_padding(canvas) is canvas
+
+    shifted = np.full((3, 512, 512), 5, dtype=np.int16)
+    shifted[:, :, :3] = 0          # the README's layout: padding on the left
+    shifted[:, 509:, :] = 0
+    with pytest.raises(ValueError, match="not all zero"):
+        dataset.check_padding(shifted)
 
 
 def test_valid_window_rejects_wrong_canvas() -> None:

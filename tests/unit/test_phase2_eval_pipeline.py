@@ -180,35 +180,6 @@ def test_the_share_table_has_every_model_and_the_patch_count(setting):
 
 
 
-def test_the_cache_and_the_remote_file_give_the_same_published_boa(setting, tmp_path):
-    published, *_ = run(setting)
-    for version in (1.0, 4.0):
-        directory = (
-            tmp_path / "baseline" / phase0.published_model_id(version) / phase0.CLOUDSEN12_TEST
-        )
-        directory.mkdir(parents=True)
-        per_scene_metric(
-            score_split(setting.data, lambda image, v=version: published_prediction(v)),
-            balanced_overall_accuracy,
-        ).to_csv(directory / "per_scene_boa.csv")
-
-    gaps = phase2_eval.published_gaps(published, tmp_path / "baseline")
-    assert list(gaps["model"]) == ["OCM published 1.0", "OCM published 4.0"]
-    assert gaps["largest gap"].abs().max() == pytest.approx(0.0)
-    assert phase2_eval.published_gaps(published, tmp_path / "absent").empty
-
-
-def test_legacy_gaps_report_only_the_files_that_exist(setting):
-    _, counts, _, _ = run(setting)
-    assert phase2_eval.legacy_gaps(counts["test"], setting.results).empty
-
-    frame = evaluation.unit_boa(counts["test"][0], "scene").loc["swin"]
-    frame.to_csv(setting.results / "swin_shared_per_scene_boa_seed0.csv")
-    gaps = phase2_eval.legacy_gaps(counts["test"], setting.results)
-    assert gaps[["seed", "model"]].values.tolist() == [[0, "swin"]]
-    assert gaps["largest gap"].iloc[0] == pytest.approx(0.0)
-
-
 def test_the_fast_reader_check_refuses_a_mismatch(monkeypatch):
     table = pd.DataFrame({"a": range(3)})
     good = samples(count=1)[0]
@@ -221,3 +192,11 @@ def test_the_fast_reader_check_refuses_a_mismatch(monkeypatch):
     wrong = types.SimpleNamespace(image=good.image + 1, annotation=good.annotation)
     with pytest.raises(AssertionError, match="differs from GDAL"):
         phase2_eval.check_fast_reader(lambda t, row: wrong, {"test": table})
+
+
+def test_counts_are_named_by_crop_so_an_old_crop_is_never_read_back(tmp_path):
+    from cloudband.datasets.cloudsen12 import CROP_REVISION
+
+    path = phase2_eval.counts_path(tmp_path, "test", "seed0")
+    assert f"crop{CROP_REVISION}" in path.name
+

@@ -51,11 +51,15 @@ NODATA_VALUE = 99
 EXPECTED_SPLIT_SIZES: dict[str, int] = {"train": 8490, "validation": 535, "test": 975}
 REMOVED_PATCH_ALLOWANCE = 2
 
-# Patches are padded from 509 to 512 with zeros on the left and bottom sides.
+# Patches are padded from 509 to 512 with zeros on the right and bottom sides. The
+# dataset README says left and bottom, but the rasters carry the padding on the right
+# (DIVERGENCES D17); check_padding verifies it on every image read.
 CANVAS_SIZE = 512
 VALID_SIZE = 509
 VALID_ROWS = slice(0, 509)
-VALID_COLUMNS = slice(3, 512)
+VALID_COLUMNS = slice(0, 509)
+# Raised whenever the crop changes, so results computed with another crop are not reused.
+CROP_REVISION = 2
 
 IMAGE_INDEX = 0
 ANNOTATION_INDEX = 1
@@ -187,6 +191,24 @@ def valid_window(array: NDArray[ScalarT]) -> NDArray[ScalarT]:
     return cropped
 
 
+def check_padding(image: NDArray[ScalarT]) -> NDArray[ScalarT]:
+    """Refuse a 512 canvas whose padding, the part valid_window drops, is not all zero.
+
+    The padding is zeros in every band; real pixels are not. A non-zero value there
+    means the crop would drop real data and keep padding.
+    """
+    if image.shape[-2:] != (CANVAS_SIZE, CANVAS_SIZE):
+        raise ValueError(f"expected a {CANVAS_SIZE}x{CANVAS_SIZE} canvas, got {image.shape}")
+    keep = np.zeros(image.shape[-2:], dtype=bool)
+    keep[VALID_ROWS, VALID_COLUMNS] = True
+    if np.any(image[..., ~keep]):
+        raise ValueError(
+            "the pixels outside the 509 window are not all zero: the padding is not where "
+            "valid_window expects it"
+        )
+    return image
+
+
 def nodata_mask(annotation: NDArray[np.integer]) -> NDArray[np.bool_]:
     """Mark pixels carrying the reserved no-data value."""
     marked: NDArray[np.bool_] = annotation == NODATA_VALUE
@@ -207,7 +229,7 @@ def read_sample(table: pd.DataFrame, index: int, crop_to_valid: bool = True) -> 
         annotation: NDArray[np.integer] = source.read(1)
 
     if crop_to_valid:
-        image = valid_window(image)
+        image = valid_window(check_padding(image))
         annotation = valid_window(annotation)
     return Sample(
         identifier=str(metadata[ID_COLUMN]),
