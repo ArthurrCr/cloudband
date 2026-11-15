@@ -123,5 +123,6 @@ def test_phase2_figures():
         "0–10%\nn = 10 patches", "10–30%\nn = 10 patches"
     ]
     assert len(ax.patches) == len(bins) * len(models) - 1   # no bar where the BOA is undefined
+    assert sorted(text.get_text() for text in ax.texts) == ["90.00"] * len(ax.patches)
     colors = share_colors(models)
     assert len(set(colors.values())) == len(models)
