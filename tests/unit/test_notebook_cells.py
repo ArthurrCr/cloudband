@@ -62,7 +62,9 @@ def test_the_evaluation_runs_the_phase2_steps_in_order():
 def test_the_hugging_face_token_comes_right_after_the_drive_and_before_any_data(name):
     path = next(p for p in NOTEBOOKS if p.name == name)
     sources = [source for _, source in code_cells(path)]
-    drive = next(i for i, s in enumerate(sources) if "drive.mount(" in s)
+    drive = next(
+        i for i, s in enumerate(sources) if "drive.mount(" in s or "open_shared_folder(" in s
+    )
     token = next(i for i, s in enumerate(sources) if "whoami-v2" in s)
     first_read = next(
         i for i, s in enumerate(sources) if "load_remote(" in s or "load_test_tables(" in s
