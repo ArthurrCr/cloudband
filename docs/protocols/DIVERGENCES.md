@@ -342,7 +342,7 @@ rectangle or an edge is.
 
 ## D17. The 509 window was cropped from the wrong side
 
-Status: fixed in the reader (CROP_REVISION 2). The networks are not retrained (decision of 15/11/2026, below); the test is scored again with the fixed crop.
+Status: fixed in the reader (CROP_REVISION 2), and confirmed on the rescored test on 17/11/2026 (the strip is gone; docs/AUDIT.md A1). The networks are not retrained (decision of 15/11/2026, below).
 
 The full verification (hypotheses tested, counts, evidence, references, how to reproduce) is
 in `docs/AUDIT.md`, A1; what it leaves for reporting is in `docs/LIMITATIONS.md`, L1.

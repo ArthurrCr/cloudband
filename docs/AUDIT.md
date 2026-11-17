@@ -8,8 +8,9 @@ limitações que restam, em `LIMITATIONS.md`.
 
 ## A1. Recorte do patch de 509 pixels do CloudSEN12+ (15/11/2026)
 
-**Resultado:** defeito encontrado e corrigido. O recorte de 512 para 509 pixels tirava o lado errado em um dos
-eixos. Registrado como DIVERGENCES D17; a limitação que resta está em LIMITATIONS L1.
+**Resultado:** defeito encontrado, corrigido e a correção confirmada nos dados reais (17/11/2026). O recorte de
+512 para 509 pixels tirava o lado errado em um dos eixos. Registrado como DIVERGENCES D17; a limitação que resta
+está em LIMITATIONS L1.
 
 ### Sintoma
 
@@ -107,11 +108,50 @@ leitor rápido e o cache usam a mesma `valid_window`, o defeito atingia treino, 
   certo, a menor contagem de céu limpo deve ser 0 (os 67 patches totalmente nublados) e nenhuma contagem deve se
   repetir em dezenas de patches.
 
+### Confirmação depois da correção (17/11/2026)
+
+O notebook de avaliação foi rodado de novo com o recorte corrigido (CROP_REVISION 2). As contagens novas estão em
+`cloudband_treino/results`, com `crop2` no nome: `phase2-v2-crop2-counts-test-ocm-rgn-published-v1.7.0-model{1.0,2.0,3.0,4.0}.csv`
+e `phase2-v2-crop2-counts-test-seed{0..4}.csv` (e as equivalentes `test_l2a`). Comparação no teste L1C, com as
+mesmas contagens do item 3 de um lado e as contagens novas do outro.
+
+**A faixa de preenchimento sumiu** (`clear_pixel_audit` sobre o OCM publicado 4.0):
+
+| Medida | Recorte antigo | Recorte corrigido |
+|---|---|---|
+| Pixels anotados por patch | 259.081 em todos | 259.081 em todos |
+| Menor número de pixels de céu limpo num patch | 1.527 | **0** |
+| Patches sem nenhum pixel de céu limpo | 0 | **67** |
+| Patches com exatamente 1.527 (3 × 509) pixels de céu limpo | 67 | **0** |
+| Patches só de céu limpo | 199 | 199 |
+
+Os 67 patches que antes tinham exatamente a faixa são agora os 67 totalmente nublados, e os 199 patches só de céu
+limpo não mudam: a faixa era a única diferença.
+
+**A discrepância na faixa clear 0–10% desapareceu** (mediana sobre os patches com BOA definido; modelos treinados na
+seed 0, para comparar com a mesma base do item 2):
+
+| Modelo | n antes | BOA antes | Sensibilidade antes | n depois | BOA depois | Sensibilidade depois |
+|---|---|---|---|---|---|---|
+| OCM publicado 1.0 | 162 | 0,952 | 0,957 | 97 | 0,841 | 0,699 |
+| OCM publicado 4.0 | 162 | 0,954 | 0,967 | 97 | 0,872 | 0,771 |
+| OCM treinado (ensemble) | 162 | 0,868 | 0,776 | 97 | 0,870 | 0,762 |
+| regnety treinado | 162 | 0,916 | 0,861 | 97 | 0,844 | 0,708 |
+| convnext treinado | 162 | 0,835 | 0,682 | 97 | 0,849 | 0,781 |
+| Swin treinado | 162 | 0,879 | 0,793 | 97 | 0,828 | 0,695 |
+
+As versões publicadas caíram de cerca de 0,95 para 0,84–0,87: os pontos que ganhavam ao marcar a faixa zerada como
+céu limpo, pela máscara de no-data do pacote [4], deixaram de existir. Os modelos treinados mudaram pouco, porque
+acertavam só parte da faixa. Com o recorte corrigido, o OCM treinado (0,870) fica praticamente empatado com o OCM
+publicado 4.0 (0,872) nessa faixa, e acima da versão 1.0. A diferença de 8 a 12 pontos vista antes era um artefato
+do recorte, não uma diferença entre os modelos.
+
 ### Efeito na faixa clear 0–10% e o n = 57
 
 Sem a faixa, os 67 patches totalmente nublados ficam sem céu limpo; o BOA deles fica indefinido e sai da mediana,
-como manda a convenção do artigo [1] (ver abaixo). Estimado sobre as contagens antigas, a faixa clear 0–10% passa
-de 162 para cerca de 97 patches com BOA definido.
+como manda a convenção do artigo [1] (ver abaixo). A faixa clear 0–10% passa de 162 para 97 patches com BOA
+definido: a estimativa feita sobre as contagens antigas foi confirmada pelas contagens novas (ver "Confirmação
+depois da correção").
 
 O n = 57 do projeto anterior não foi reproduzido. Com o código antigo (`stratified_analysis` em
 `src/cloudsen12/evaluation/evaluator.py` [6]) aplicado a este teste, todas as variantes testadas dão outros
@@ -124,7 +164,7 @@ valores:
 | Faixa fechada em 10% (`pd.cut`, `right=True`) | 162 (nenhum patch na borda) |
 | Agrupando pela cobertura de nuvem, o padrão `stratify_by="cloud_cover"` | 87 |
 | Agrupando pela porcentagem de pixels inválidos (nuvem + sombra) | 52 |
-| Sem a faixa de preenchimento | cerca de 97 |
+| Sem a faixa de preenchimento (recorte corrigido) | 97 |
 
 O projeto anterior lia o canvas inteiro de 512 sem recorte, portanto com as duas bordas de preenchimento. A
 diferença que resta deve vir de outro detalhe da execução antiga (dados, versão do dataset ou argumentos da
