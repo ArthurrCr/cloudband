@@ -50,6 +50,11 @@ def _error_label(error: BaseException) -> str:
     return f"{type(error).__name__}: {text}"
 
 
+def _crop_revision(meta: dict) -> int:
+    """The crop a cache was copied with; caches from before the record are revision 1."""
+    return int(meta.get("crop_revision", 1))
+
+
 def _sample_path(directory: Path, index: int) -> Path:
     return directory / f"{index:06d}.npz"
 
@@ -118,6 +123,12 @@ class LocalCache:
     def _check_table(self, directory: Path, table: pd.DataFrame) -> None:
         meta_path = directory / META_FILE
         stored = json.loads(meta_path.read_text())
+        if _crop_revision(stored) != dataset.CROP_REVISION:
+            raise ValueError(
+                f"the cache in {directory} was cropped with crop revision "
+                f"{_crop_revision(stored)}, not {dataset.CROP_REVISION} (DIVERGENCES D17); "
+                "run build again, which copies it anew"
+            )
         if stored["fingerprint"] != table_fingerprint(table):
             raise ValueError(
                 f"the cache in {directory} was built for a different table, in "
@@ -160,9 +171,23 @@ class LocalCache:
         meta_path = directory / META_FILE
         fingerprint = table_fingerprint(table)
         if meta_path.is_file():
+            stored = _crop_revision(json.loads(meta_path.read_text()))
+            if stored != dataset.CROP_REVISION:
+                progress(
+                    f"{name}: copied with crop revision {stored}, not "
+                    f"{dataset.CROP_REVISION} (DIVERGENCES D17); copying it again"
+                )
+                for old in directory.glob("*.npz"):
+                    old.unlink()
+                meta_path.unlink()
+        if meta_path.is_file():
             self._check_table(directory, table)
         else:
-            meta = {"fingerprint": fingerprint, "n": len(table)}
+            meta = {
+                "fingerprint": fingerprint,
+                "n": len(table),
+                "crop_revision": dataset.CROP_REVISION,
+            }
             meta_path.write_text(json.dumps(meta))
 
         pending = [
