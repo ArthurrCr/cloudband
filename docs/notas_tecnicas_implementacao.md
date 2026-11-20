@@ -554,6 +554,14 @@ O PixBox Sentinel-2 bate com o notebook de referência do pacote dentro de 0,07 
 
 As runs do convnext treinadas a 3e-3 antes da busca própria dele são descartadas (ADR-0023 D2).
 
+### Fase 2b — OCM × Swin+UPerNet com as 13 bandas do L1C (20/11/2026)
+
+Mesma comparação, mesmo protocolo (ADR-0023 rev. 2), com todas as 13 bandas do L1C (B01 a B12, com B8A e B10) e
+treino só em L1C, porque o L2A não tem B10. Primeira camada das duas redes adaptada pela regra do timm, nova busca
+de LR, 5 seeds. Notebook: `notebooks/05_l1c13_training/train_l1c13_molab.py`. O cache local das 13 bandas ocupa
+cerca de 7 MB por patch (cerca de 63 GB para treino e validação); se o disco não comportar, o notebook grava os
+arquivos comprimidos, que são mais lentos de ler. Detalhes em DIVERGENCES D18 e LIMITATIONS L2.
+
 ### Fases 3 e 4 (não iniciadas)
 
 Pacotes vazios no repositório: `features/`, `tokens/`, `ranking/`, `lobo/`, `sensors/`.

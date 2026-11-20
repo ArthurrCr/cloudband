@@ -39,18 +39,24 @@ def build_unet(
     backbone_name: str,
     img_size: tuple = (VALID_SIZE, VALID_SIZE),
     pretrained: bool = True,
+    in_chans: int = INPUT_CHANNELS,
 ) -> torch.nn.Module:
     """Build one Dynamic U-Net over a timm backbone.
 
     img_size only shapes the encoder trace at construction time; the
     resulting model is fully convolutional and accepts any input size at
     runtime, which the mixed-resolution protocol depends on.
+
+    in_chans is the number of input bands. With pretrained weights and other than
+    three, timm adapts the ImageNet first layer (timm.models.adapt_input_conv: the RGB
+    filters repeated over the channels and scaled by 3 / in_chans); fastai's own n_in
+    stays at 3, so it leaves that layer as timm built it.
     """
     encoder = partial(
         timm.create_model,
         backbone_name,
         pretrained=pretrained,
-        in_chans=INPUT_CHANNELS,
+        in_chans=in_chans,
     )
     return create_unet_model(
         arch=encoder,

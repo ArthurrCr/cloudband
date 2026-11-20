@@ -25,6 +25,8 @@ Status values: `open`, `resolved`.
 | D14 | Published weights postdate the paper and were trained differently | resolved |
 | D15 | OCM trains both backbones at one learning rate; we search one per backbone | resolved |
 | D16 | OmniCloudMask augmentations: the paper against the authors' current code | resolved |
+| D17 | The 509 window was cropped from the wrong side | resolved |
+| D18 | The 13-band experiment: L1C only, and a pretrained stem adapted from 3 to 13 bands | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -393,3 +395,61 @@ padding on the wrong side (three padding columns labelled clear kept, three real
 lost, 0.59% of each patch), the same for both; evaluation used the correct crop. Results
 from before the fix (files without `crop2` in their name) are not comparable and are not
 used.
+
+## D18. The 13-band experiment: L1C only, and a pretrained stem adapted from 3 to 13 bands
+
+Status: resolved (decision of 20/11/2026; code in `train/experiments.py`, `train/protocol.py`).
+
+Question: with three bands (R-G-NIR) the OCM ensemble beats Swin-T + UPerNet by a small
+margin (`claude/resultados-fase2.md` in the project). Does the ranking hold when both see
+every band Sentinel-2 records? The experiment `l1c13` trains the same two architectures, with
+the same protocol (ADR-0023 rev. 2: grid, budget, augmentations, 10 m validation, 5 seeds),
+on all 13 bands. Three choices depart from the R-G-NIR experiment.
+
+**1. Thirteen bands, L1C only.** The CloudSEN12+ L1C rasters carry 13 bands in the order
+B01, B02, B03, B04, B05, B06, B07, B08, B8A, B09, B10, B11, B12; the L2A rasters carry 12
+of them, without B10 (cirrus, 1375 nm), plus the AOT and WVP layers (dataset card [1];
+Aybar et al. 2024 [2]). B10 is a top-of-atmosphere water-vapour absorption band with no
+surface signal, so Sen2Cor drops it from L2A [3]. A 13-band model can only be trained and
+tested on L1C. Training on L1C plus L2A at 12 bands was considered and rejected: it gives up
+B10, the band the Sentinel-2 mission added to detect thin cirrus [3].
+Within the experiment both architectures see the same patches, so the CNN against ViT
+comparison stays as controlled as at three bands. The test is the L1C test split (975
+patches), the primary test of the project already.
+
+**2. The ImageNet stem adapted to 13 bands, the same way for both.** Both encoders were
+pretrained on 3-channel RGB (ADR-0023 D4). For the OCM backbones timm adapts the first
+convolution when `in_chans` differs from the pretrained one: `adapt_input_conv` repeats the
+RGB filters over the new channels, keeps the first `in_chans`, and scales them by
+3 / in_chans so the activations keep their magnitude [4]. The Hugging Face Swin backbone has
+no such step and refuses a mismatched patch embedding, so `adapt_patch_embedding` applies
+that same timm function to the Swin patch-embedding weights. Both architectures therefore
+start from the same adaptation of the same kind of weights, and D4 (symmetric pretrained
+initialization) still holds. The repeated filters carry no knowledge of what B01 or B12
+are; both models learn that from the data. Checked by tests: the adapted Swin weights equal
+`adapt_input_conv(13, rgb)` and the adapted model has the layers of one built for 13 bands.
+
+**3. A learning-rate search of its own.** The run ids are new
+(`ocm-l1c13-cs12-shared-v2`, `swin-l1c13-cs12-shared-v2`), so the scheduler runs the full
+grid again for each network instead of reusing the R-G-NIR winners: more input bands and a
+new first layer can move the optimum. Micro-batch, local cache and settings are kept apart
+from the R-G-NIR ones (`micro_batch_l1c13`, `cloudband_cache_l1c13`).
+
+**What this does not allow.** Comparing a 13-band model with an R-G-NIR model of the same
+architecture does not isolate the bands. The two experiments also differ in the training
+data (L1C only, 8,490 + 535 patches, against L1C plus L2A, twice as many), in the crop (the
+R-G-NIR models trained on the wrong crop, D17, the 13-band ones on the fixed one) and in the
+first layer (adapted against pretrained as is). Such a comparison is reported as informative
+only. Isolating the bands needs an R-G-NIR run on L1C only, under the fixed crop, which is a
+new experiment in `train/experiments.py`.
+
+References
+
+1. CloudSEN12+ dataset card, https://huggingface.co/datasets/tacofoundation/cloudsen12
+   (band table of the L1C and L2A products).
+2. Aybar, C. et al. (2024). CloudSEN12+: The largest dataset of expert-labeled pixels for
+   cloud and cloud shadow detection in Sentinel-2. Data in Brief, 56, 110852.
+3. ESA, Sentinel-2 Level-2A processing (Sen2Cor), SentiWiki: the L2A product holds 12
+   surface-reflectance bands; B10 is not provided.
+4. timm, `timm/models/_manipulate.py`, `adapt_input_conv`, applied by `load_pretrained` when
+   `in_chans` differs from the pretrained input.

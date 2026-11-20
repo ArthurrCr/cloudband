@@ -155,11 +155,16 @@ def load_test_tables() -> dict[str, pd.DataFrame]:
     return {split: phase0.load_test_split(source) for split, source in sources.items()}
 
 
-def check_fast_reader(reader, tables: Mapping[str, pd.DataFrame]) -> int:
+def check_fast_reader(
+    reader,
+    tables: Mapping[str, pd.DataFrame],
+    band_indices: Sequence[int] | None = phase0.RGN_INDICES,
+) -> int:
     """The fast reader must return what GDAL returns, bands selected.
 
     Checked on the first and last patch of the first table and the first patch of
-    the others, so both ends of the file and every level are covered.
+    the others, so both ends of the file and every level are covered. band_indices
+    are the bands the reader keeps (R-G-NIR by default); None means all of them.
     """
     checks = []
     for position, table in enumerate(tables.values()):
@@ -168,7 +173,8 @@ def check_fast_reader(reader, tables: Mapping[str, pd.DataFrame]) -> int:
             checks.append((table, len(table) - 1))
     for table, row in checks:
         expected, got = gdal_read_sample(table, row), reader(table, row)
-        same = np.array_equal(got.image, phase0.select_rgn(expected.image)) and np.array_equal(
+        bands = expected.image if band_indices is None else expected.image[list(band_indices)]
+        same = np.array_equal(got.image, bands) and np.array_equal(
             got.annotation, expected.annotation
         )
         if not same:

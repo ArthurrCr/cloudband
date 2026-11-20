@@ -51,7 +51,9 @@ def phase2_networks(ocm_protocol, swin_protocol, ocm_dls, swin_dls, pretrained=T
             label=f"OCM {backbone}",
             search_protocol=ocm_search_protocol(ocm_protocol, backbone),
             base_protocol=ocm_protocol,
-            builder=lambda backbone=backbone: build_unet(backbone, pretrained=pretrained),
+            builder=lambda backbone=backbone: build_unet(
+                backbone, pretrained=pretrained, in_chans=len(ocm_protocol.bands)
+            ),
             dls=ocm_dls,
             suffix=backbone,
         )
@@ -62,7 +64,9 @@ def phase2_networks(ocm_protocol, swin_protocol, ocm_dls, swin_dls, pretrained=T
             label="Swin+UPerNet",
             search_protocol=swin_protocol,
             base_protocol=swin_protocol,
-            builder=lambda: build_swin_upernet(pretrained=pretrained),
+            builder=lambda: build_swin_upernet(
+                pretrained=pretrained, in_chans=len(swin_protocol.bands)
+            ),
             dls=swin_dls,
         )
     )
