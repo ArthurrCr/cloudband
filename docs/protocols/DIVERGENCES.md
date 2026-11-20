@@ -381,6 +381,13 @@ the fifteen runs again, and the time is not there. What this leaves, and why it 
 - The published OmniCloudMask versions are scored on the same fixed patches, so the
   reference no longer gains from the strip either.
 
+Training from now on: every reader crops with the fixed window, and the local cache records
+the crop revision it was copied with (meta.json, `crop_revision`); a cache copied with another
+revision, or from before the record, is refused when read and copied anew by `build`, so a
+cache left on disk (molab keeps its work folder) cannot bring the old crop back. Retraining
+these same networks needs a new PROTOCOL_REVISION: run ids carry the protocol revision, not
+the crop, so under `-v2` the scheduler finds the current checkpoints and counts the runs as done.
+
 What to state when reporting: the networks were trained on 509 patches cropped with the
 padding on the wrong side (three padding columns labelled clear kept, three real columns
 lost, 0.59% of each patch), the same for both; evaluation used the correct crop. Results

@@ -245,6 +245,8 @@ Este documento guarda o nível de detalhe que foi cortado da proposta oficial (2
 >   perdia 3 colunas reais. A avaliação é refeita com o recorte novo (arquivos `...-crop2-...`). Os modelos **não são
 >   retreinados** (decisão de 15/11/2026): treino e validação usaram o recorte antigo, igual para as duas arquiteturas,
 >   e isso deve ser declarado como limitação ao reportar. Detalhes e justificativa no D17.
+>   Treinos futuros já usam o recorte certo; o cache local registra a revisão do recorte e copia de novo o que foi
+>   copiado com outra. Para retreinar estas mesmas redes, é preciso uma nova PROTOCOL_REVISION (D17).
 
 ### 2.11 Pré-processamento (Fase 1) — o que precisa estar fechado antes de treinar
 

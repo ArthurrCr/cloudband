@@ -195,3 +195,34 @@ def test_samples_iterates_the_whole_table_in_order(tmp_path):
     identifiers = [s.identifier for s in cache.samples("train", table)]
 
     assert identifiers == [f"scene-{i:03d}" for i in range(len(table))]
+
+def test_a_cache_copied_with_another_crop_is_refused_then_copied_again(tmp_path):
+    import json
+
+    cache, table = build(tmp_path)
+    meta_path = cache.split_dir("train") / cache_module.META_FILE
+    meta = json.loads(meta_path.read_text())
+    assert meta["crop_revision"] == cache_module.dataset.CROP_REVISION
+
+    # a cache from before the crop was recorded, i.e. the first crop (DIVERGENCES D17)
+    del meta["crop_revision"]
+    meta_path.write_text(json.dumps(meta))
+    stale = cache.split_dir("train") / "000002.npz"
+    stale.write_bytes(b"cropped the old way")
+    with pytest.raises(ValueError, match="crop revision 1"):
+        cache.reader("train", table)
+
+    calls = []
+
+    def counting_reader(table, index, crop_to_valid=True):
+        calls.append(index)
+        return fake_read_sample(table, index, crop_to_valid)
+
+    messages = []
+    cache.build("train", table, read_sample=counting_reader, progress=messages.append,
+                workers=2, backoff_seconds=0, pause_seconds=0)
+
+    assert sorted(calls) == list(range(len(table)))     # every sample copied again
+    assert any("copying it again" in m for m in messages)
+    cached = cache.reader("train", table)(table, 2)
+    assert np.array_equal(cached.annotation, fake_read_sample(table, 2).annotation)
