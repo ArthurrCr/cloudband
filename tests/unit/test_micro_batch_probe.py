@@ -124,8 +124,8 @@ def test_the_probe_can_pick_a_smaller_batch_through_the_real_step(monkeypatch):
     monkeypatch.setattr(
         smoke,
         "_fits_in_memory",
-        lambda builder, batch, size, amp, headroom: _fits_in_memory(
-            builder, batch, 16, amp, headroom, device="cpu"
+        lambda builder, batch, size, amp, headroom, channels: _fits_in_memory(
+            builder, batch, 16, amp, headroom, device="cpu", channels=channels
         ),
     )
 

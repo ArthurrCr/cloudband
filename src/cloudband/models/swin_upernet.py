@@ -1,4 +1,4 @@
-"""Swin+UPerNet, restricted to R-G-NIR, built from Hugging Face transformers."""
+"""Swin+UPerNet over R-G-NIR or any band set, built from Hugging Face transformers."""
 
 from __future__ import annotations
 
@@ -48,10 +48,40 @@ class SwinUperNet(torch.nn.Module):
         return self.model(pixel_values=x).logits
 
 
+def adapt_patch_embedding(backbone, in_chans: int) -> None:
+    """Give a pretrained Swin backbone an input of in_chans bands, in place.
+
+    The ImageNet patch embedding takes three channels. It is replaced by one taking
+    in_chans, whose weights follow the rule timm applies to the OCM encoders
+    (timm.models.adapt_input_conv: the RGB filters repeated over the channels and
+    scaled by 3 / in_chans), so both architectures start from the same adaptation.
+    """
+    from timm.models import adapt_input_conv
+
+    # The module sits at backbone.embeddings in transformers 4 and at
+    # backbone.swin.embeddings in transformers 5, so it is found by its class.
+    embeddings = next(
+        module for module in backbone.modules()
+        if type(module).__name__ == "SwinPatchEmbeddings"
+    )
+    old = embeddings.projection
+    new = torch.nn.Conv2d(
+        in_chans, old.out_channels, kernel_size=old.kernel_size, stride=old.stride,
+        padding=old.padding, bias=old.bias is not None,
+    )
+    with torch.no_grad():
+        new.weight.copy_(adapt_input_conv(in_chans, old.weight))
+        if old.bias is not None:
+            new.bias.copy_(old.bias)
+    embeddings.projection = new
+    embeddings.num_channels = in_chans
+    backbone.config.num_channels = in_chans
+
+
 def build_swin_upernet(
-    img_size: int = VALID_SIZE, pretrained: bool = True
+    img_size: int = VALID_SIZE, pretrained: bool = True, in_chans: int = INPUT_CHANNELS
 ) -> torch.nn.Module:
-    """Build Swin-T + UPerNet, restricted to R-G-NIR input.
+    """Build Swin-T + UPerNet over in_chans input bands (R-G-NIR by default).
 
     The auxiliary head is disabled so the training loss stays plain cross
     entropy, the same shape as OCM's loss. pretrained loads only the Swin
@@ -60,7 +90,7 @@ def build_swin_upernet(
     decoder uses between its pretrained encoder and its random decoder.
     """
     swin_config = SwinConfig(
-        num_channels=INPUT_CHANNELS,
+        num_channels=in_chans,
         image_size=img_size,
         depths=SWIN_DEPTHS,
         window_size=SWIN_WINDOW_SIZE,
@@ -79,6 +109,8 @@ def build_swin_upernet(
             PRETRAINED_BACKBONE_ID,
             out_indices=list(SWIN_ENCODER_STAGES),
         )
+        if in_chans != model.backbone.config.num_channels:
+            adapt_patch_embedding(model.backbone, in_chans)
 
     return SwinUperNet(model)
 

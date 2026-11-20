@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import collections
 import hashlib
+import io
 import json
 import re
 import shutil
@@ -33,6 +34,14 @@ from cloudband.pipelines.phase0 import select_rgn
 
 META_FILE = "meta.json"
 BYTES_PER_SAMPLE = 2_000_000  # 3 bands + annotation at 509 x 509, with headroom
+
+
+def bytes_per_sample(bands: int) -> int:
+    """Disk taken by one uncompressed sample of `bands` uint16 bands, with headroom."""
+    from cloudband.datasets.cloudsen12 import VALID_SIZE
+
+    pixels = VALID_SIZE * VALID_SIZE
+    return int((bands * 2 + 1) * pixels * 1.05) + 10_000
 
 SampleReader = Callable[[pd.DataFrame, int, bool], Sample]
 
@@ -59,18 +68,43 @@ def _sample_path(directory: Path, index: int) -> Path:
     return directory / f"{index:06d}.npz"
 
 
-def _write_sample(path: Path, sample: Sample, bands_selected: bool = False) -> None:
-    partial = path.with_suffix(".partial")
+def _save(handle, sample: Sample, bands_selected: bool, compress: bool) -> None:
     image = sample.image if bands_selected else select_rgn(sample.image)
+    save = np.savez_compressed if compress else np.savez
+    save(
+        handle,
+        image=np.ascontiguousarray(image),
+        annotation=sample.annotation,
+        identifier=np.array(sample.identifier),
+        roi_id=np.array(sample.roi_id or ""),
+    )
+
+
+def _write_sample(
+    path: Path, sample: Sample, bands_selected: bool = False, compress: bool = False
+) -> None:
+    partial = path.with_suffix(".partial")
     with open(partial, "wb") as handle:
-        np.savez(
-            handle,
-            image=np.ascontiguousarray(image),
-            annotation=sample.annotation,
-            identifier=np.array(sample.identifier),
-            roi_id=np.array(sample.roi_id or ""),
-        )
+        _save(handle, sample, bands_selected, compress)
     partial.replace(path)
+
+
+def measured_sample_bytes(
+    samples, bands_selected: bool = False, compress: bool = False, headroom: float = 1.15
+) -> int:
+    """Disk one cached sample takes, measured by writing a few to memory as build would.
+
+    The largest of them, with headroom: how much zlib shrinks a patch depends on the
+    scene, so a compressed cache is sized from real patches, not from a fixed ratio.
+    """
+    sizes = []
+    for sample in samples:
+        buffer = io.BytesIO()
+        _save(buffer, sample, bands_selected, compress)
+        sizes.append(buffer.tell())
+    if not sizes:
+        raise ValueError("no sample to measure")
+    return int(max(sizes) * headroom)
 
 
 class CachedReader:
@@ -148,6 +182,8 @@ class LocalCache:
         rounds: int = 3,
         pause_seconds: float = 60.0,
         sleep: Callable[[float], None] = time.sleep,
+        sample_bytes: int = BYTES_PER_SAMPLE,
+        compress: bool = False,
     ) -> None:
         """Copy every sample of the table, in parallel, skipping those already copied.
 
@@ -161,8 +197,15 @@ class LocalCache:
         round raises an error that names the most common causes; running build again
         retries those.
 
-        bands_selected says the reader already returns only the red, green and
-        near-infrared bands, as datasets.fast_read.FastReader does by default.
+        bands_selected says the reader already returns only the bands to keep (the red,
+        green and near-infrared bands, as datasets.fast_read.FastReader does by default,
+        or every band, with FastReader(bands=None)).
+
+        sample_bytes is the disk one sample takes, for the free-space check
+        (bytes_per_sample gives it for a band count, measured_sample_bytes measures it
+        on real samples, as a compressed cache needs); compress writes zlib-compressed
+        files, smaller and slower to read, for a disk that cannot hold the plain ones.
+        Reading handles both.
         """
         reader = read_sample if read_sample is not None else dataset.read_sample
         directory = self.split_dir(name)
@@ -197,7 +240,7 @@ class LocalCache:
             progress(f"{name}: already complete, {len(table)} samples")
             return
 
-        needed = len(pending) * BYTES_PER_SAMPLE
+        needed = len(pending) * sample_bytes
         free = shutil.disk_usage(directory).free
         if free < needed:
             raise RuntimeError(
@@ -212,6 +255,7 @@ class LocalCache:
                         _sample_path(directory, index),
                         reader(table, index, True),
                         bands_selected,
+                        compress,
                     )
                     return index
                 except Exception:

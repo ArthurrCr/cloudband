@@ -1,6 +1,6 @@
 """Shared training protocol for the OCM vs Swin+UPerNet comparison."""
 
-from dataclasses import dataclass, field, fields
+from dataclasses import dataclass, field, fields, replace
 
 from cloudband.datasets.cloudsen12 import VALID_SIZE
 from cloudband.pipelines.phase0 import RGN_BANDS, RGN_INDICES
@@ -145,6 +145,36 @@ def swin_shared_protocol(learning_rate: float) -> TrainProtocol:
         learning_rate=learning_rate,
         augment=True,
         native_validation=True,
+    )
+
+
+# Every band of the L1C product, in the order the files store them (dataset card of
+# CloudSEN12+). L2A has no B10, so the 13-band experiment trains and tests on L1C only.
+L1C_BANDS: tuple = (
+    "B01", "B02", "B03", "B04", "B05", "B06", "B07", "B08", "B8A", "B09", "B10", "B11", "B12",
+)
+L1C_BAND_INDICES: tuple = tuple(range(len(L1C_BANDS)))
+
+
+def ocm_l1c13_protocol(learning_rate: float) -> TrainProtocol:
+    """OCM on all 13 L1C bands, L1C only; otherwise the shared protocol unchanged."""
+    return replace(
+        ocm_shared_protocol(learning_rate),
+        run_id=f"ocm-l1c13-cs12-shared-{PROTOCOL_REVISION}",
+        bands=L1C_BANDS,
+        band_indices=L1C_BAND_INDICES,
+        processing_levels=("L1C",),
+    )
+
+
+def swin_l1c13_protocol(learning_rate: float) -> TrainProtocol:
+    """Swin+UPerNet on all 13 L1C bands, L1C only; otherwise the shared protocol."""
+    return replace(
+        swin_shared_protocol(learning_rate),
+        run_id=f"swin-l1c13-cs12-shared-{PROTOCOL_REVISION}",
+        bands=L1C_BANDS,
+        band_indices=L1C_BAND_INDICES,
+        processing_levels=("L1C",),
     )
 
 

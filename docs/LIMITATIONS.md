@@ -32,3 +32,30 @@ no conjunto de teste usou o recorte correto."
 
 **Resultados que não devem ser usados:** tudo o que foi calculado antes da correção, ou seja, os arquivos de
 contagem sem `crop2` no nome e as tabelas e figuras feitas a partir deles.
+
+---
+
+## L2. Experimento de 13 bandas: comparável dentro dele, não com o de 3 bandas
+
+**Origem:** DIVERGENCES D18. **Decisão de 20/11/2026:** 13 bandas, só L1C, nova busca de taxa de aprendizado,
+5 seeds.
+
+**O que o experimento responde:** se, com as 13 bandas do L1C, o ensemble OCM continua à frente do
+Swin-T + UPerNet. As duas arquiteturas treinam nos mesmos patches, com o mesmo protocolo e a mesma adaptação da
+primeira camada pré-treinada (regra do timm, `adapt_input_conv`), então essa comparação é tão controlada quanto a
+de 3 bandas.
+
+**O que não se pode afirmar:** quanto as 10 bandas a mais rendem para cada arquitetura. Entre os modelos de 3 e
+de 13 bandas mudam também:
+
+- os dados de treino: só L1C (8.490 + 535 patches) contra L1C e L2A (o dobro);
+- o recorte: os de 3 bandas treinaram com o recorte antigo (L1), os de 13 com o corrigido;
+- a primeira camada: adaptada de 3 para 13 canais contra a pré-treinada sem alteração.
+
+Essa comparação entra só como informativa. Para isolar o efeito das bandas é preciso treinar R-G-NIR só em L1C, com
+o recorte corrigido.
+
+**Texto sugerido para a metodologia:** "No experimento com as 13 bandas do produto L1C, a primeira camada das
+redes pré-treinadas em ImageNet foi adaptada de 3 para 13 canais pela regra do timm (filtros RGB repetidos e
+escalados por 3/13), igualmente para as duas arquiteturas. O treino e o teste usam apenas o nível L1C, porque o
+L2A não contém a banda B10."

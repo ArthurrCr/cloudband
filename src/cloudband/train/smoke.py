@@ -178,6 +178,7 @@ def _fits_in_memory(
     mixed_precision: bool,
     headroom: float,
     device: str = "cuda",
+    channels: int = 3,
 ) -> bool:
     """One full training step on random data at the given size, on the device.
 
@@ -193,7 +194,7 @@ def _fits_in_memory(
             torch.cuda.reset_peak_memory_stats()
         model = model_builder().to(device).train()
         optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
-        x = torch.rand(batch_size, 3, size, size, device=device)
+        x = torch.rand(batch_size, channels, size, size, device=device)
         y = torch.randint(0, 4, (batch_size, size, size), device=device)
         amp = mixed_precision and on_gpu
         with torch.autocast(device, dtype=torch.float16, enabled=amp):
@@ -228,7 +229,7 @@ def probe_micro_batch_size(
     Training draws a resolution for every batch, and the smallest ground sampling
     distance gives the largest tensor (565 px at 9 m). A probe that merely trains a
     few batches passes or fails by the luck of the draw, so this one forces that
-    size. Memory is the only thing it decides: the protocol's effective batch size
+    size, with as many input bands as the protocol has. Memory is the only thing it decides: the protocol's effective batch size
     is reached by gradient accumulation whatever the micro-batch is.
 
     Without a GPU there is nothing to measure and the first candidate is returned.
@@ -240,7 +241,8 @@ def probe_micro_batch_size(
 
     def measured(batch_size: int) -> bool:
         return _fits_in_memory(
-            model_builder, batch_size, size, protocol.mixed_precision, headroom
+            model_builder, batch_size, size, protocol.mixed_precision, headroom,
+            channels=len(protocol.bands),
         )
 
     check = fits or measured

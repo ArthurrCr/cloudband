@@ -9,8 +9,9 @@ the Drive folder. Separate processes keep each run's random state its own, so a 
 gives the same result whichever worker trains it.
 
 A worker starts from the notebook's mirror (hard links, no new download), reads the
-cache the notebook built, and takes the micro-batch the notebook decided. Its output
-goes to worker<k>.log in the work folder.
+cache the notebook built, and takes the micro-batch the notebook decided, all for the
+experiment the notebook trains (train.experiments). Its output goes to worker<k>.log in
+the work folder.
 """
 
 from __future__ import annotations
@@ -62,6 +63,7 @@ def launch(
     token_file: Path,
     num_workers: int = 2,
     first_index: int = 1,
+    experiment: str = "rgn",
 ) -> list[Worker]:
     """Start `count` worker processes; they run until every unit is done or held."""
     work_dir, project_dir = Path(work_dir), Path(project_dir)
@@ -83,6 +85,7 @@ def launch(
                 "--parent-training-dir", str(parent_training_dir),
                 "--token-file", str(token_file),
                 "--num-workers", str(num_workers),
+                "--experiment", experiment,
             ],
             cwd=project_dir,
             env=env,
@@ -121,24 +124,11 @@ def cpu_summary() -> str:
 # ---- what one worker process does ----
 
 
-def _load_tables(dataset):
-    import pandas as pd
+def _load_tables(dataset, chosen):
+    from cloudband.train.experiments import load_tables
 
-    def load_split(remote_source, split):
-        return dataset.select(dataset.load_remote(remote_source), split=split)
-
-    train = pd.concat(
-        [load_split(dataset.REMOTE_L1C, "train"), load_split(dataset.REMOTE_L2A, "train")],
-        ignore_index=True,
-    )
-    valid = pd.concat(
-        [
-            load_split(dataset.REMOTE_L1C, "validation"),
-            load_split(dataset.REMOTE_L2A, "validation"),
-        ],
-        ignore_index=True,
-    )
-    return train, valid
+    tables = load_tables(chosen, dataset)
+    return chosen.tables(tables["train"]), chosen.tables(tables["validation"])
 
 
 def run_worker(args) -> None:
@@ -151,10 +141,11 @@ def run_worker(args) -> None:
     )
     from cloudband.train.cache import LocalCache
     from cloudband.train.data import build_dataloaders
-    from cloudband.train.protocol import ocm_shared_protocol, swin_shared_protocol
+    from cloudband.train.experiments import experiment
     from cloudband.train.schedule import phase2_networks, run_everything
 
     work_dir, project_dir = Path(args.work_dir), Path(args.project_dir)
+    chosen = experiment(args.experiment)
     credentials = load_credentials(Path(args.token_file).read_text())
     if credentials is None:
         raise SystemExit("the Google sign-in saved by the notebook no longer works")
@@ -172,19 +163,19 @@ def run_worker(args) -> None:
         source_dir=project_dir / "models",
         mirror=mirror,
     )
-    print(f"[worker {args.index}] session {store.session_id}", flush=True)
+    print(f"[worker {args.index}] session {store.session_id}, experiment {chosen.name}",
+          flush=True)
 
-    decided = store.load_setting("micro_batch")
+    decided = store.load_setting(chosen.micro_batch_setting)
     if decided is None:
         raise SystemExit("no micro-batch decided yet: run the micro-batch cell first")
 
-    train_table, valid_table = _load_tables(dataset)
-    cache = LocalCache(work_dir / "cloudband_cache")
+    train_table, valid_table = _load_tables(dataset, chosen)
+    cache = LocalCache(work_dir / chosen.cache_dir_name)
     train_reader = cache.reader("train", train_table)
     valid_reader = cache.reader("validation", valid_table)
 
-    ocm_protocol = ocm_shared_protocol(learning_rate=1e-4)
-    swin_protocol = swin_shared_protocol(learning_rate=1e-4)
+    ocm_protocol, swin_protocol = chosen.protocols()
 
     def make_dataloaders(micro_batch_size, protocol):
         return build_dataloaders(
@@ -222,6 +213,7 @@ def main(argv=None) -> None:
     parser.add_argument("--parent-training-dir", required=True)
     parser.add_argument("--token-file", required=True)
     parser.add_argument("--num-workers", type=int, default=2)
+    parser.add_argument("--experiment", default="rgn")
     run_worker(parser.parse_args(argv))
 
 
