@@ -231,9 +231,19 @@ V3 and later were additionally trained on Sentinel-2 imagery super-resolved 2x, 
 supported inference range down to 5 m. The documentation notes that 5 m is no more accurate than
 10 m; it only widens the range of imagery the model accepts.
 
-Not established: what random interpolation means at V2. The paper already resampled to random
-scales, so the change may be randomising the interpolation method rather than the scale, but the
-changelog does not say.
+What random interpolation means (checked on 22/11/2026). The authors' training code
+(`training/augs.py`, class `BatchResample`, repository at commit `42f509e` of 19/11/2026) draws,
+for every batch, the interpolation of the image between `bilinear` and `nearest`, and, when it
+draws bilinear, also whether to apply antialiasing. The label is always resized by nearest
+neighbour. The class docstring says so, and `MODEL_CHANGELOG.md` puts the change at V2
+("Introduced random interpolation for improved robustness"). So the scale was already random in
+the paper; what became random at V2 is the interpolation method. One caveat: the code is the
+current one, not a V2 snapshot, so that V2 drew between exactly these two modes is inferred from
+the changelog and the docstring, not seen in V2 code.
+
+The same notebook also widens the scale range to 0.07 to 1.11 of the native scale, with a plateau
+distribution between 0.33 and 1.0 (`BatchResample(max_scale=1.111, min_scale=0.07,
+plateau_min=0.33, plateau_max=1.0)`). The changelog does not say at which version that came in.
 
 ### Version 4 training data
 
@@ -279,6 +289,26 @@ The hyperparameters in the Training section above are the V1 protocol, which is 
 changelog records no training settings for V2 to V4, so learning rate, epoch budget, batch size
 and augmentation probabilities are documented only for V1. ADR-0023 reproduces that protocol,
 which is the only one fully specified.
+
+**Our choice: V1, without the random interpolation of V2** (decision recorded on 22/11/2026).
+This project trains with the paper's recipe, which is V1. The multi-resolution step draws a GSD
+uniformly between 9 and 22 m (ADR-0023 D1) and always resizes the image bilinearly, without
+antialiasing, and the label by nearest neighbour (`train/loop.py`, `resize_image` and
+`resize_annotation`). It does not draw the interpolation method, and it does not use the wider
+plateau range of the current notebook. The reasons:
+
+- the paper is the only version whose training is fully specified; V2 changed the second
+  backbone and the interpolation at once, with no ablation of either;
+- the same rule already left out the other additions found only in the authors' later code
+  (DIVERGENCES D16);
+- the choice is the same for OCM and Swin, so it does not favour either architecture in the
+  comparison.
+
+Consequence: the published versions 2.0 to 4.0 trained with random interpolation and our models
+did not. This is one more difference between them and our models, on top of data and backbone
+(DIVERGENCES D14). Random interpolation is meant to make the model robust to other resolutions and
+resampling; our test is scored at the native 10 m without any resampling, so how much of the gap
+to the published versions it explains is not known.
 
 ### Consequence for this project
 
