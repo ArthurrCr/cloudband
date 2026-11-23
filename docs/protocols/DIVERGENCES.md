@@ -278,9 +278,10 @@ and the changelog notes a new random interpolation technique, while the training
 CloudSEN12 High. Data expanded at V3, and again at V4 alongside the framework move to
 segmentation-models-pytorch. Training grew from 16,980 pairs to 100,528 across nine sub-datasets.
 
-Not established: the training hyperparameters for V2 to V4, which the changelog does not record,
-and what random interpolation means at V2. The paper already resampled to random scales, so it
-may be the interpolation method rather than the scale that became random.
+Not established: the training hyperparameters for V2 to V4, which the changelog does not record.
+What random interpolation means at V2 was established on 22/11/2026 from the authors' code: the
+interpolation method of the image (bilinear or nearest, with or without antialiasing) is drawn per
+batch; see D16 and `ocm_protocol.md`.
 
 Measured effect. Running the same pipeline with v4 weights against the paper values gives
 +5.02, +4.89 and +8.42 percentage points on PixBox Landsat 8. The gain is almost entirely in
@@ -335,6 +336,15 @@ parameters are not in the paper and are taken from the code.
 One disagreement. In the code, SceneEdge is gated at 10% per batch and then applied to each
 image of that batch with a further 10%, so about 1% of images get a scene edge. The paper
 gives 10%. We follow the paper and apply it to 10% of the samples.
+
+Random interpolation (added 22/11/2026). The resampling step of the authors' code
+(`BatchResample` in `training/augs.py`) also draws, per batch, the interpolation of the image
+between bilinear and nearest, and for bilinear whether to antialias; the label stays nearest.
+`MODEL_CHANGELOG.md` dates this to model version 2.0. It is not in the paper, so it follows the
+rule above and is left out: our resampling is always bilinear without antialiasing for the image
+and nearest for the label, for both architectures. The published versions 2.0 to 4.0 trained with
+it and our models did not, one more difference to keep in mind when reading them against each
+other (D14).
 
 Two differences of form, which leave the share of augmented samples the same: the random
 rectangle and the scene edge are drawn per sample here instead of once per batch, because
