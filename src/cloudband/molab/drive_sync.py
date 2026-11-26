@@ -67,7 +67,14 @@ def _not_allowed(error: Exception) -> bool:
 
 
 def _skipped(name: str) -> bool:
-    return name.endswith(SKIPPED_SUFFIXES) or ".partial." in name
+    """A copy still being written: its name ends with ".partial".
+
+    Only the end of the name counts. The learning-rate search keeps its finished
+    candidates in "<run>-lr-search.partial.json", a complete record that every session
+    must see; a rule matching ".partial." anywhere kept it off the Drive, so each new
+    molab session trained the finished candidates again.
+    """
+    return name.endswith(SKIPPED_SUFFIXES)
 
 
 def _signature(path: Path) -> tuple[int, int]:

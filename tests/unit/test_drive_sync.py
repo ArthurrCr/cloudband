@@ -254,6 +254,32 @@ def test_a_run_finished_by_another_session_is_not_taken_again(tmp_path, no_folde
     assert second.is_done("run-seed0")
 
 
+def test_search_candidates_finished_by_one_session_are_seen_by_the_next(
+    tmp_path, no_folder_resolution
+):
+    from dataclasses import replace
+
+    from cloudband.train.protocol import LrSearchRun, ocm_shared_protocol
+
+    drive = colab_drive()
+    protocol = replace(ocm_shared_protocol(1e-3), run_id="run")
+    first = session(tmp_path, "a", drive)
+    first.save_search_run(protocol, LrSearchRun("run", 1e-3, 0.5), (5, 5), 0)
+
+    later = session(tmp_path, "b", drive)
+
+    assert later.load_search_run(protocol, 1e-3, (5, 5), 0) == LrSearchRun("run", 1e-3, 0.5)
+    assert not later.claim("run-seed0-lrsearch-0.001", sleep=no_wait)
+
+
+def test_only_names_ending_in_partial_are_left_off_the_drive(tmp_path):
+    for name in ("x.pth.partial", "x.state.pt.partial", "settings.json.partial"):
+        write(tmp_path / "results" / name, "half")
+    write(tmp_path / "results/run-lr-search.partial.json", "[]")
+
+    assert set(local_files(tmp_path)) == {"results/run-lr-search.partial.json"}
+
+
 def test_settings_written_by_two_sessions_are_both_kept(tmp_path, no_folder_resolution):
     drive = colab_drive()
     first, second = session(tmp_path, "a", drive), session(tmp_path, "b", drive)
