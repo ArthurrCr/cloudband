@@ -111,10 +111,17 @@ class Scheduler:
         )
         return record is not None
 
-    def search_of(self, network: Network) -> LrSearchManifest | None:
-        """The finished search of a network, saved once complete; None while it is not."""
+    def _saved_search(self, network: Network) -> LrSearchManifest | None:
+        """The search saved for this grid, if any."""
         saved = self.store.load_search(network.search_protocol)
         if saved is not None and tuple(saved.grid) == self.grid:
+            return saved
+        return None
+
+    def search_of(self, network: Network) -> LrSearchManifest | None:
+        """The finished search of a network, saved once complete; None while it is not."""
+        saved = self._saved_search(network)
+        if saved is not None:
             return saved
         if not all(self._candidate_done(network, rate) for rate in self.grid):
             return None
@@ -137,6 +144,11 @@ class Scheduler:
         """Train the first free unit, if any. Returns its name, or None."""
         for rate in self.grid:
             for network in self.networks:
+                # The saved search decides, not the per-candidate records: those can
+                # be lost (a cleanup of the Drive) while the search itself is complete,
+                # and running its candidates again would only waste the GPU.
+                if self._saved_search(network) is not None:
+                    continue
                 if self._candidate_done(network, rate):
                     continue
                 try:

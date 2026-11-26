@@ -126,6 +126,19 @@ def test_a_session_works_around_what_another_one_holds_and_waits_for_a_search(se
         assert store.is_done(run_name(networks[1], 1e-3, seed))
 
 
+def test_a_saved_search_is_not_run_again_when_its_candidate_records_are_lost(setup):
+    networks, store = setup
+    run_everything(networks, store, SEEDS, grid=GRID, wait=False, say=lambda _m: None)
+    winners = [winner(store, network) for network in networks]
+    for network in networks:
+        store.search_progress_path(network.search_protocol).unlink()
+
+    again = run_everything(networks, store, SEEDS, grid=GRID, wait=False, say=lambda _m: None)
+
+    assert again.trained == [] and again.finished
+    assert [winner(store, network) for network in networks] == winners
+
+
 def test_without_waiting_the_session_reports_what_is_left(setup):
     networks, store = setup
     other = RunStore(store.results_dir, store.checkpoint_dir, store.source_dir)
