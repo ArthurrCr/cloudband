@@ -87,6 +87,7 @@ def plot_all_models(
     labels: Mapping[str, str],
     title: str,
     metric_label: str = "Median BOA per patch (%)",
+    colors: Mapping[str, str] | None = None,
 ) -> Figure:
     """BOA of every model on one axis per experiment.
 
@@ -95,7 +96,8 @@ def plot_all_models(
     trained models), separated by a rule. A model with seeds shows each seed as a
     small dot and the mean as a large one; a model without seeds (a published
     version) is one diamond. Every point is named on the axis, and its value is
-    written next to it.
+    written next to it. colors gives the colour of a model; the others go by family
+    (OCM blue, Swin orange).
     """
     order = [model for group in groups for model in group]
     rows, y, rules = {}, 0.0, []
@@ -117,7 +119,7 @@ def plot_all_models(
         highest = max(max(v.max() for v in spread), max(means))
         for model, mean, values in zip(order, means, spread):
             row = top - rows[model]
-            color = _model_color(model)
+            color = (colors or {}).get(model) or _model_color(model)
             if np.ptp(values) == 0:
                 ax.scatter([mean], [row], marker="D", s=60, color=REFERENCE, edgecolor="white",
                            linewidth=1.5, zorder=3)
@@ -171,6 +173,7 @@ def plot_boa_by_share(
     models: Sequence[str],
     labels: Mapping[str, str],
     title: str,
+    colors: Mapping[str, str] | None = None,
 ) -> Figure:
     """BOA of every model in each range of class share, for one experiment.
 
@@ -178,10 +181,11 @@ def plot_boa_by_share(
     the patch count n, the mean over seeds of the median BOA per patch and its SD. One group of bars per
     range, one bar per model in the given order, the number of patches under each
     group, and the BOA written above each bar. The axis runs from 0 to 100%; a model
-    with seeds carries a line of one SD.
+    with seeds carries a line of one SD. colors gives the colour of a model, for
+    models share_colors does not know.
     """
     bins = list(dict.fromkeys(table.index.get_level_values(0)))
-    colors = share_colors(models)
+    colors = {**share_colors(models), **(colors or {})}
     width = 0.84 / len(models)
 
     fig, ax = plt.subplots(figsize=(14, 6))

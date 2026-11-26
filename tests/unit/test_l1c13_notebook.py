@@ -44,3 +44,24 @@ def test_the_test_split_is_only_audited_never_cached():
     text = source()
     assert '("train", train_table), ("validation", valid_table)' in text
     assert 'cache.build("test"' not in text
+
+
+EVALUATION = NOTEBOOK.with_name("evaluate_l1c13_molab.py")
+
+
+def test_the_evaluation_notebook_only_calls_the_pipeline_and_sends_its_results():
+    text = EVALUATION.read_text()
+    tree = ast.parse(text)
+    assert any(
+        isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "app"
+        for node in tree.body
+    )
+    assert "google.colab" not in text and "mo.md(" not in text
+    for call in (
+        "l1c13_eval.build_test_cache(", "l1c13_eval.score_trained(", "l1c13_eval.load_rgn_counts(",
+        "l1c13_eval.load_published(", "l1c13_eval.combine(", "l1c13_eval.save_report(",
+    ):
+        assert call in text
+    for experiment in ("clear", "cloud", "shadow"):
+        assert f'figure_by_share(combined, "{experiment}")' in text
+    assert text.index("drive_mirror.push_all()") > text.index('figure_by_share(combined, "shadow")')
