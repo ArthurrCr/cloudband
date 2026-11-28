@@ -1,4 +1,5 @@
 import ast
+import json
 from pathlib import Path
 
 NOTEBOOK = (
@@ -46,22 +47,44 @@ def test_the_test_split_is_only_audited_never_cached():
     assert 'cache.build("test"' not in text
 
 
-EVALUATION = NOTEBOOK.with_name("evaluate_l1c13_molab.py")
+
+EVALUATION = NOTEBOOK.with_name("evaluate_l1c13_colab.ipynb")
 
 
-def test_the_evaluation_notebook_only_calls_the_pipeline_and_sends_its_results():
-    text = EVALUATION.read_text()
-    tree = ast.parse(text)
-    assert any(
-        isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "app"
-        for node in tree.body
-    )
-    assert "google.colab" not in text and "mo.md(" not in text
-    for call in (
-        "l1c13_eval.build_test_cache(", "l1c13_eval.score_trained(", "l1c13_eval.load_rgn_counts(",
-        "l1c13_eval.load_published(", "l1c13_eval.combine(", "l1c13_eval.save_report(",
-    ):
-        assert call in text
-    for experiment in ("clear", "cloud", "shadow"):
-        assert f'figure_by_share(combined, "{experiment}")' in text
-    assert text.index("drive_mirror.push_all()") > text.index('figure_by_share(combined, "shadow")')
+def evaluation_code():
+    cells = json.loads(EVALUATION.read_text())["cells"]
+    return [
+        "".join(cell["source"]) for cell in cells if cell["cell_type"] == "code"
+    ]
+
+
+def test_the_evaluation_is_a_colab_notebook_and_the_molab_one_is_gone():
+    assert not NOTEBOOK.with_name("evaluate_l1c13_molab.py").exists()
+    metadata = json.loads(EVALUATION.read_text())["metadata"]
+    assert metadata["accelerator"] == "GPU"
+    code = "\n".join(evaluation_code())
+    assert "open_shared_folder()" in code and "shared.push()" in code
+
+
+def test_the_evaluation_notebook_only_calls_the_pipeline_in_order():
+    cells = evaluation_code()
+    for index, source in enumerate(cells):
+        lines = [
+            line[: len(line) - len(line.lstrip())] + "pass" if line.lstrip().startswith("!") else line
+            for line in source.splitlines()
+        ]
+        tree = ast.parse("\n".join(lines))
+        defined = [n.name for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef, ast.ClassDef))]
+        assert not defined, f"cell {index} defines {defined}; move it to src/cloudband"
+    steps = [
+        "l1c13_eval.load_test_table(", "l1c13_eval.build_test_cache(", "l1c13_eval.score_trained(",
+        "l1c13_eval.load_rgn_counts(", "l1c13_eval.load_published(", "l1c13_eval.combine(",
+        "l1c13_eval.save_report(", "figure_all_models(report)",
+        'figure_by_share(combined, "clear")', 'figure_by_share(combined, "cloud")',
+        'figure_by_share(combined, "shadow")', "table_ocm_vs_swin(", "table_bands(",
+        "table_vs_published(", "shared.push()",
+    ]
+    positions = [next(i for i, s in enumerate(cells) if step in s) for step in steps]
+    assert positions == sorted(positions)
+    figures = [s for s in cells if "figure_" in s and "show(" in s]
+    assert len(figures) == 4 and all(s.count("show(") == 1 for s in figures)
