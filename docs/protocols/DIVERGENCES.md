@@ -27,6 +27,7 @@ Status values: `open`, `resolved`.
 | D16 | OmniCloudMask augmentations: the paper against the authors' current code | resolved |
 | D17 | The 509 window was cropped from the wrong side | resolved |
 | D18 | The 13-band experiment: L1C only, and a pretrained stem adapted from 3 to 13 bands | resolved |
+| D19 | U-Net + RegNetZ-D8 retrained with the recipe of the earlier repository, not ADR-0023 | resolved |
 
 ## D1. STUPmask Sentinel-2 training set
 
@@ -463,3 +464,39 @@ References
    surface-reflectance bands; B10 is not provided.
 4. timm, `timm/models/_manipulate.py`, `adapt_input_conv`, applied by `load_pretrained` when
    `in_chans` differs from the pretrained input.
+
+## D19. U-Net + RegNetZ-D8 retrained with the recipe of the earlier repository, not ADR-0023
+
+Status: resolved (decision of 28/11/2026; code in `train/regnetz_recipe.py`, notebook
+`notebooks/06_regnetz/train_regnetz_ft_molab.py`).
+
+Question: the network proposed in the earlier repository, U-Net + RegNetZ-D8 on 13 bands
+with Focal Tversky ("UNet+RegNetZ-D8 (FT)" in its figures), is trained again, 5 seeds, to see
+whether its results come back. Decided: its own recipe, as the code stood when it was trained
+(github.com/ArthurrCr/Cloud-Segmentation, December 2025), not the ADR-0023 protocol of OCM and
+Swin.
+
+The recipe, read from that code: `smp.Unet` with encoder `tu-regnetz_d8`, ImageNet weights,
+13 input bands (smp repeats the RGB filters over the bands and rescales them) and 4 classes;
+Focal Tversky (alpha 0.3, beta 0.7, gamma 0.75); Adam at 1e-4 with weight decay 1e-4;
+ReduceLROnPlateau on the validation loss (factor 0.1, patience 3); at most 50 epochs, early
+stopping after 5 without an improvement of 1e-4, checkpoint at the lowest validation loss;
+batch 4; mixed precision; the image divided by 10,000; the whole 512 canvas; L1C, high-quality
+labels, p509. No data augmentation: the dataset code of that time
+(`src/utils/dataset.py`, commits of 27/12/2025) applies none, and the checkpoint on the Drive
+(`pibic/checkpoints/stage1_loss_ce/best_model.pth`, 28/12/2025) was trained with it.
+
+Three points are not recorded there and were chosen:
+
+1. **Learning rate of the Focal Tversky model.** The final value was not kept; 1e-4 is the
+   default of the code and the rate of its loss comparison (stage 1), so it is used.
+2. **Seeds.** The earlier run used 42; the five seeds are 42 to 46.
+3. **The canvas.** The cache holds the 509 window cut by the fixed crop (D17). Padding it back
+   to 512 with zeros on the right and bottom gives exactly what the earlier code read: its 3
+   rows and columns of padding (zero image, clear-sky label) are trained on, as there.
+
+What this does not allow: a controlled comparison with the 13-band OCM and Swin. The recipe
+differs in loss, optimiser, schedule, epoch budget and its stopping rule, batch, normalisation,
+augmentation (none here), learning-rate selection, and the padding in the loss. The three can
+be read side by side on the same test patches, as the published OmniCloudMask versions are, but
+a difference between them is not one of architecture.

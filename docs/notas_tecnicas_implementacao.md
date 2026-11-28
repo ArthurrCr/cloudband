@@ -568,6 +568,14 @@ Avaliação: `notebooks/05_l1c13_training/evaluate_l1c13_molab.py` (molab) ou `e
 que a avaliação da fase 2 já salvou. A comparação do experimento é OCM × Swin, os dois com 13 bandas; a comparação
 13 bandas × R-G-NIR de cada arquitetura é só informativa (LIMITATIONS L2).
 
+### U-Net + RegNetZ-D8 (Focal Tversky), reprodução do repositório anterior (28/11/2026)
+
+Rede proposta no repositório Cloud-Segmentation, treinada de novo com a receita de lá, 5 seeds (42 a 46), 13 bandas,
+L1C: Focal Tversky, Adam 1e-4, ReduceLROnPlateau, até 50 épocas com early stopping, batch 4, imagem ÷ 10.000, canvas
+512, sem aumento de dados. Código em `src/cloudband/train/regnetz_recipe.py`, notebook do molab em
+`notebooks/06_regnetz/train_regnetz_ft_molab.py`. Retomada por época como nos outros treinos. Não é comparação
+controlada com OCM e Swin (DIVERGENCES D19).
+
 ### Fases 3 e 4 (não iniciadas)
 
 Pacotes vazios no repositório: `features/`, `tokens/`, `ranking/`, `lobo/`, `sensors/`.
