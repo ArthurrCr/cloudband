@@ -2,6 +2,7 @@ import types
 
 import pandas as pd
 import pytest
+import torch
 from matplotlib.figure import Figure
 
 from cloudband.pipelines import l1c13_eval, phase2_eval
@@ -123,3 +124,97 @@ def test_seeds_must_match_between_the_experiments(scored):
     rgn = {seed: frame for seed, frame in scored.counts.items() if seed != 4}
     with pytest.raises(ValueError, match=r"\[4\]"):
         l1c13_eval.combine(scored.counts, rgn, pd.DataFrame())
+
+
+def regnetz_store(done):
+    class DoneStore(Store):
+        def is_done(self, name):
+            return name in done
+
+        def checkpoint_path(self, name):
+            return name
+
+    return DoneStore()
+
+
+def test_regnetz_reads_the_image_as_in_training_and_is_cut_back_to_the_window():
+    import numpy as np
+
+    from cloudband.train.regnetz_recipe import RegNetZRecipe, predict_classes
+
+    seen = []
+
+    class Probe(torch.nn.Module):
+        def forward(self, x):
+            seen.append(x)
+            out = torch.zeros(1, 4, *x.shape[-2:])
+            out[:, 2] = 1.0
+            return out
+
+    recipe = RegNetZRecipe(canvas=64)
+    image = np.full((13, 61, 61), 5000, np.uint16)
+    classes = predict_classes(Probe(), image, recipe)
+    assert classes.shape == (61, 61) and (classes == 2).all()
+    assert seen[0].shape == (1, 13, 64, 64)
+    assert torch.allclose(seen[0][0, :, :61, :61], torch.tensor(0.5))
+    assert not seen[0][0, :, 61:, :].any() and not seen[0][0, :, :, 61:].any()
+
+
+def test_regnetz_joins_the_report_once_all_its_seeds_are_scored(scored, monkeypatch):
+    from cloudband.train.regnetz_recipe import RegNetZRecipe
+
+    recipe = RegNetZRecipe(seeds=(42, 43, 44, 45, 46))
+    names = {recipe.checkpoint_name(s) for s in recipe.seeds}
+    truth = annotation(0)
+    loads = []
+
+    def load(seed):
+        loads.append(seed)
+        return Fixed(truth, strength=3.0, seed=seed)
+
+    import cloudband.train.regnetz_recipe as rr
+
+    monkeypatch.setattr(
+        rr, "predict_classes",
+        lambda model, image, recipe, device: (
+            model(torch.zeros(1, 3, *image.shape[-2:])).argmax(1).squeeze(0).numpy()
+        ),
+    )
+    regnetz = l1c13_eval.score_regnetz(
+        scored.setting.cache, None, regnetz_store(names), scored.setting.results, "cpu",
+        recipe=recipe, load=load, log=lambda m: None,
+    )
+    assert loads == list(recipe.seeds) and sorted(regnetz) == list(recipe.seeds)
+    assert l1c13_eval.regnetz_counts_path(scored.setting.results, 42).name == (
+        "phase2-v2-crop2-counts-test-l1c13-regnetz-seed42.csv"
+    )
+
+    combined = l1c13_eval.combine(
+        scored.counts, l1c13_eval.load_rgn_counts(scored.setting.results, sorted(scored.counts)),
+        l1c13_eval.load_published(scored.setting.results), regnetz,
+    )
+    assert all("regnetz" in set(frame["model"]) for frame in combined.values())
+    report = l1c13_eval.build_report(combined)
+    table = l1c13_eval.table_regnetz(report)
+    assert set(table.index.get_level_values(0)) == {
+        "RegNetZ vs OCM 13 bands", "RegNetZ vs Swin 13 bands",
+    }
+    assert "U-Net + RegNetZ-D8 13 bands (FT)" in l1c13_eval.table_all_models(report).index
+    assert l1c13_eval.share_models(combined)[-1] == "regnetz"
+    assert isinstance(l1c13_eval.figure_by_share(combined, "shadow"), Figure)
+    assert isinstance(l1c13_eval.figure_all_models(report), Figure)
+
+
+def test_regnetz_stays_out_until_every_seed_is_trained(scored):
+    from cloudband.train.regnetz_recipe import RegNetZRecipe
+
+    recipe = RegNetZRecipe()
+    some = {recipe.checkpoint_name(42), recipe.checkpoint_name(43)}
+    regnetz = l1c13_eval.score_regnetz(
+        scored.setting.cache, None, regnetz_store(some), scored.setting.results, "cpu",
+        recipe=recipe, load=lambda seed: Fixed(annotation(0)), log=lambda m: None,
+    )
+    assert regnetz == {}
+    assert l1c13_eval.share_models(scored.combined) == l1c13_eval.SHARE_MODELS
+    with pytest.raises(ValueError, match="RegNetZ"):
+        l1c13_eval.table_regnetz(scored.report)

@@ -218,13 +218,14 @@ def _(WORK_DIR, l1c13_eval):
 
 @app.cell
 def _(RESULTS_DIR, cache, l1c13_eval, store, test_table, torch):
-    # Counts: the 13-band seeds are scored here (or read back if already saved); the
-    # R-G-NIR seeds and the published versions come from the phase 2 evaluation.
+    # Counts: the 13-band seeds and the RegNetZ seeds are scored here (or read back if
+    # already saved); the R-G-NIR seeds and the published versions come from phase 2.
     DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
     counts = l1c13_eval.score_trained(cache, test_table, store, RESULTS_DIR, DEVICE)
     rgn = l1c13_eval.load_rgn_counts(RESULTS_DIR, sorted(counts))
     published = l1c13_eval.load_published(RESULTS_DIR)
-    combined = l1c13_eval.combine(counts, rgn, published)
+    regnetz = l1c13_eval.score_regnetz(cache, test_table, store, RESULTS_DIR, DEVICE)
+    combined = l1c13_eval.combine(counts, rgn, published, regnetz)
     report = l1c13_eval.build_report(combined)
     _saved = l1c13_eval.save_report(report, RESULTS_DIR)
     print(f"seeds: {sorted(counts)}; {len(_saved)} tables saved to {RESULTS_DIR}")
@@ -256,6 +257,14 @@ def _(l1c13_eval, report):
 
 @app.cell
 def _(l1c13_eval, report):
+    # U-Net + RegNetZ-D8 (Focal Tversky) minus OCM and minus Swin, all at 13 bands, per
+    # ROI. Whole systems: RegNetZ was trained with the earlier repository's recipe (D19).
+    l1c13_eval.table_regnetz(report)
+    return
+
+
+@app.cell
+def _(l1c13_eval, report):
     # OCM and Swin at 13 bands minus each published OmniCloudMask version, per ROI.
     l1c13_eval.table_vs_published(report)
     return
@@ -279,8 +288,8 @@ def _(combined, l1c13_eval):
 
 @app.cell
 def _(FIGURES_DIR, combined, l1c13_eval, show):
-    # clear: BOA by share of clear pixels, published 4.0 and each architecture at R-G-NIR
-    # and at 13 bands.
+    # clear: BOA by share of clear pixels, published 4.0, each architecture at R-G-NIR
+    # and at 13 bands, and RegNetZ.
     _figure = l1c13_eval.figure_by_share(combined, "clear")
     show(_figure, FIGURES_DIR, l1c13_eval.figure_name("by-share-clear"), lambda _f: None)
     _figure
