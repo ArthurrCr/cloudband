@@ -562,7 +562,7 @@ de LR, 5 seeds. Notebook: `notebooks/05_l1c13_training/train_l1c13_molab.py`. O 
 cerca de 7 MB por patch (cerca de 63 GB para treino e validação); se o disco não comportar, o notebook grava os
 arquivos comprimidos, que são mais lentos de ler. Detalhes em DIVERGENCES D18 e LIMITATIONS L2.
 
-Avaliação, no Colab (o molab fica só para o treino): `notebooks/05_l1c13_training/evaluate_l1c13_colab.ipynb`, com a lógica em
+Avaliação: `notebooks/05_l1c13_training/evaluate_l1c13_molab.py` (molab) ou `evaluate_l1c13_colab.ipynb` (Colab, quando houver GPU), com a lógica em
 `src/cloudband/pipelines/l1c13_eval.py`. Pontua os modelos de 13 bandas no teste L1C (contagens
 `phase2-v2-crop2-counts-test-l1c13-seed{n}.csv`) e lê as contagens dos modelos R-G-NIR e das versões publicadas
 que a avaliação da fase 2 já salvou. A comparação do experimento é OCM × Swin, os dois com 13 bandas; a comparação

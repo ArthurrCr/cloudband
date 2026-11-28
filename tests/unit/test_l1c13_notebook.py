@@ -58,8 +58,7 @@ def evaluation_code():
     ]
 
 
-def test_the_evaluation_is_a_colab_notebook_and_the_molab_one_is_gone():
-    assert not NOTEBOOK.with_name("evaluate_l1c13_molab.py").exists()
+def test_the_evaluation_is_a_colab_notebook():
     metadata = json.loads(EVALUATION.read_text())["metadata"]
     assert metadata["accelerator"] == "GPU"
     code = "\n".join(evaluation_code())
@@ -88,3 +87,31 @@ def test_the_evaluation_notebook_only_calls_the_pipeline_in_order():
     assert positions == sorted(positions)
     figures = [s for s in cells if "figure_" in s and "show(" in s]
     assert len(figures) == 4 and all(s.count("show(") == 1 for s in figures)
+
+
+MOLAB_EVALUATION = NOTEBOOK.with_name("evaluate_l1c13_molab.py")
+
+
+def test_the_molab_evaluation_only_calls_the_pipeline_and_sends_its_results():
+    text = MOLAB_EVALUATION.read_text()
+    tree = ast.parse(text)
+    assert any(
+        isinstance(node, ast.Assign) and ast.unparse(node.targets[0]) == "app"
+        for node in tree.body
+    )
+    assert "google.colab" not in text and "mo.md(" not in text
+    for call in (
+        "l1c13_eval.build_test_cache(", "l1c13_eval.score_trained(", "l1c13_eval.load_rgn_counts(",
+        "l1c13_eval.load_published(", "l1c13_eval.combine(", "l1c13_eval.save_report(",
+    ):
+        assert call in text
+    for experiment in ("clear", "cloud", "shadow"):
+        assert f'figure_by_share(combined, "{experiment}")' in text
+    assert text.index("drive_mirror.push_all()") > text.index('figure_by_share(combined, "shadow")')
+
+
+def test_the_evaluations_give_torch_a_device_it_accepts():
+    """Session.device describes the GPU ("cuda:<name>"); torch.load refuses it as a device."""
+    for text in (MOLAB_EVALUATION.read_text(), "\n".join(evaluation_code())):
+        assert "session.device" not in text
+        assert 'DEVICE = "cuda" if torch.cuda.is_available() else "cpu"' in text
