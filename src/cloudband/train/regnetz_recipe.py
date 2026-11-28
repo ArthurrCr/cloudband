@@ -152,6 +152,28 @@ def loaders(train_table, valid_table, train_reader, valid_reader, recipe: RegNet
     return train, valid
 
 
+def predict_classes(model: nn.Module, image: np.ndarray, recipe: RegNetZRecipe,
+                    device: str = "cpu") -> np.ndarray:
+    """Class map of one 509 window, read as in training: on the canvas, divided by 10,000.
+
+    The window is padded back to the 512 canvas, the network runs on it, and the
+    prediction is cut back to the window, so the padding never reaches a score.
+    """
+    rows, columns = image.shape[-2:]
+    canvas, _ = to_canvas(image, np.zeros((rows, columns), np.uint8), recipe)
+    tensor = model_input(canvas, recipe).unsqueeze(0).to(device)
+    with torch.no_grad():
+        classes = model(tensor).argmax(dim=1).squeeze(0).cpu().numpy()
+    return classes[:rows, :columns]
+
+
+def load_trained(recipe: RegNetZRecipe, path: Path, device: str = "cpu") -> nn.Module:
+    """A trained seed: the architecture without downloading ImageNet weights, then its own."""
+    model = build_regnetz_unet(recipe, pretrained=False)
+    model.load_state_dict(torch.load(path, map_location=device, weights_only=True))
+    return model.to(device).eval()
+
+
 # ---- training -------------------------------------------------------------------
 
 

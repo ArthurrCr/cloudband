@@ -17,6 +17,12 @@ Two comparisons, read differently:
 In the counts, the 13-band models keep the phase 2 names (regnety, convnext, ocm,
 swin), so the phase 2 report applies unchanged; the R-G-NIR models are renamed with
 the suffix " rgn".
+
+The U-Net + RegNetZ-D8 of the earlier repository (DIVERGENCES D19), when its seeds are
+trained, joins as "regnetz". It reads the image as it was trained, divided by 10,000 on
+the 512 canvas, and is scored on the same 509 windows. Its recipe is not the OCM and
+Swin one, so its comparisons with them are between whole systems, as with the published
+versions, and say nothing about architecture alone.
 """
 
 from __future__ import annotations
@@ -54,6 +60,7 @@ SPLIT = "test"  # the L1C test split
 TRAINED = ("regnety", "convnext", "ocm", "swin")
 RGN_SUFFIX = " rgn"
 RGN = tuple(f"{model}{RGN_SUFFIX}" for model in TRAINED)
+REGNETZ = "regnetz"
 
 LABELS = {
     "regnety": "regnety 13 bands",
@@ -64,6 +71,7 @@ LABELS = {
     "convnext rgn": "convnext R-G-NIR",
     "ocm rgn": "OCM R-G-NIR (ensemble)",
     "swin rgn": "Swin-T + UPerNet R-G-NIR",
+    REGNETZ: "U-Net + RegNetZ-D8 13 bands (FT)",
     **{published_name(v): f"OCM published {v:.1f}" for v in PUBLISHED_VERSIONS},
 }
 # Same families as phase 2 (OCM blue, Swin orange); R-G-NIR is the lighter step.
@@ -76,16 +84,22 @@ COLORS = {
     "convnext rgn": "#a9cbf4",
     "ocm rgn": "#86b6ef",
     "swin rgn": "#f5a582",
+    REGNETZ: "#2a9d5c",
     # the gray of 4.0 in the phase 2 figures, which show all four versions
     published_name(PUBLISHED_VERSIONS[-1]): plots.PUBLISHED_RAMP[-1],
 }
 # Bars of the share figures: the latest published version, then each architecture at
 # R-G-NIR and at 13 bands, side by side.
 SHARE_MODELS = (published_name(PUBLISHED_VERSIONS[-1]), "ocm rgn", "ocm", "swin rgn", "swin")
+SHARE_MODELS_WITH_REGNETZ = (*SHARE_MODELS, REGNETZ)
 
 BANDS_VS_RGN = (
     "OCM 13 bands vs OCM R-G-NIR, per ROI",
     "Swin 13 bands vs Swin R-G-NIR, per ROI",
+)
+REGNETZ_VS = (
+    "RegNetZ vs OCM 13 bands, per ROI",
+    "RegNetZ vs Swin 13 bands, per ROI",
 )
 
 Log = Callable[[str], None]
@@ -250,23 +264,86 @@ def combine(
     counts: Mapping[int, pd.DataFrame],
     rgn: Mapping[int, pd.DataFrame],
     published: pd.DataFrame,
+    regnetz: Mapping[int, pd.DataFrame] | None = None,
 ) -> dict[int, pd.DataFrame]:
-    """Per seed: the 13-band models, the R-G-NIR models of the same seed number, and the
-    published versions, all on exactly the same patches.
+    """Per seed: the 13-band models, the R-G-NIR models of the same seed number, the
+    RegNetZ seed of the same rank if given, and the published versions, all on exactly
+    the same patches.
 
-    Seeds of the two experiments are independent draws; the comparisons average each
-    model over its seeds before pairing patches or ROIs, so which seed meets which
-    plays no part.
+    Seeds of the experiments are independent draws; the comparisons average each model
+    over its seeds before pairing patches or ROIs, so which seed meets which plays no
+    part. RegNetZ seeds (42 to 46) are matched to the others by rank.
     """
     missing = sorted(set(counts) ^ set(rgn))
     if missing:
         raise ValueError(f"seeds {missing} are in one experiment and not in the other")
+    if regnetz and len(regnetz) != len(counts):
+        raise ValueError(
+            f"{len(regnetz)} RegNetZ seeds for {len(counts)} seeds of the other models"
+        )
+    extra = dict(zip(sorted(counts), (regnetz[s] for s in sorted(regnetz)))) if regnetz else {}
     joined = {}
     for seed, frame in counts.items():
-        if set(frame["scene"]) != set(rgn[seed]["scene"]):
-            raise ValueError(f"seed {seed}: 13-band and R-G-NIR counts cover different patches")
-        joined[seed] = pd.concat([frame, rgn[seed]], ignore_index=True)
+        parts = [frame, rgn[seed]] + ([extra[seed]] if seed in extra else [])
+        for part in parts[1:]:
+            if set(frame["scene"]) != set(part["scene"]):
+                raise ValueError(f"seed {seed}: the counts of two models cover different patches")
+        joined[seed] = pd.concat(parts, ignore_index=True)
     return evaluation.with_reference(joined, published)
+
+
+def regnetz_counts_path(results_dir: Path, seed: int) -> Path:
+    return counts_path(results_dir, SPLIT, f"{EXPERIMENT.name}-{REGNETZ}-seed{seed}")
+
+
+def score_regnetz(
+    cache: LocalCache,
+    table: pd.DataFrame,
+    store,
+    results_dir: Path,
+    device: str,
+    recipe=None,
+    load: Callable[[int], torch.nn.Module] | None = None,
+    log: Log = print,
+) -> dict[int, pd.DataFrame]:
+    """Counts of every finished RegNetZ seed on the L1C test (empty while none is done).
+
+    The model reads each patch as in training (regnetz_recipe.predict_classes); the
+    counts are saved, and read back on the next run instead of scoring again.
+    """
+    from cloudband.train import regnetz_recipe
+
+    recipe = recipe or regnetz_recipe.RegNetZRecipe()
+    load = load or (
+        lambda seed: regnetz_recipe.load_trained(
+            recipe, store.checkpoint_path(recipe.checkpoint_name(seed)), device
+        )
+    )
+    ready = [s for s in recipe.seeds if store.is_done(recipe.checkpoint_name(s))]
+    log(f"RegNetZ seeds finished: {ready}")
+    counts = {}
+    for seed in ready:
+        path = regnetz_counts_path(results_dir, seed)
+        if path.exists():
+            counts[seed] = evaluation.load_counts(path)
+            continue
+        model = load(seed)
+        frame = evaluation.score_predictor(
+            cache.samples(SPLIT, table),
+            lambda image, model=model: regnetz_recipe.predict_classes(model, image, recipe, device),
+            REGNETZ,
+        )
+        evaluation.save_counts(frame, path)
+        counts[seed] = frame
+        log(f"RegNetZ seed {seed}: scored and saved")
+        del model
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    if ready and len(ready) != len(recipe.seeds):
+        log(f"RegNetZ is left out until all {len(recipe.seeds)} seeds are done")
+        return {}
+    return counts
 
 
 # ---- report ---------------------------------------------------------------------
@@ -277,7 +354,14 @@ def build_report(combined: Mapping[int, pd.DataFrame]) -> dict[str, pd.DataFrame
     tables = evaluation.report(combined, published=PUBLISHED)
     for title, (model_a, model_b) in zip(BANDS_VS_RGN, (("ocm", "ocm rgn"), ("swin", "swin rgn"))):
         tables[title] = evaluation.paired_comparison(combined, model_a, model_b, "roi")
+    if _has_regnetz(combined):
+        for title, other in zip(REGNETZ_VS, ("ocm", "swin")):
+            tables[title] = evaluation.paired_comparison(combined, REGNETZ, other, "roi")
     return tables
+
+
+def _has_regnetz(combined: Mapping[int, pd.DataFrame]) -> bool:
+    return any(REGNETZ in set(frame["model"]) for frame in combined.values())
 
 
 def save_report(report: Mapping[str, pd.DataFrame], results_dir: Path) -> list[Path]:
@@ -296,7 +380,9 @@ def save_report(report: Mapping[str, pd.DataFrame], results_dir: Path) -> list[P
 def table_all_models(report) -> pd.DataFrame:
     """Median BOA per patch (percent) of every model: the seeds, their mean and SD."""
     table = _in_points(report["median per patch, per seed"])
-    order = [m for m in (*PUBLISHED, *RGN, *TRAINED) if m in table.index.get_level_values(0)]
+    order = [
+        m for m in (*PUBLISHED, *RGN, *TRAINED, REGNETZ) if m in table.index.get_level_values(0)
+    ]
     return table.reindex(order, level=0).rename(index=LABELS, level=0)
 
 
@@ -308,6 +394,17 @@ def table_ocm_vs_swin(report) -> pd.DataFrame:
 def table_bands(report) -> pd.DataFrame:
     """13 bands minus R-G-NIR, per architecture, per ROI, in BOA points (informative)."""
     return _in_points(evaluation.stacked(report, BANDS_VS_RGN))
+
+
+def table_regnetz(report) -> pd.DataFrame:
+    """RegNetZ minus OCM and minus Swin, all at 13 bands, per ROI, in BOA points.
+
+    Comparisons of whole systems: RegNetZ was trained with another recipe (D19).
+    """
+    titles = [title for title in REGNETZ_VS if title in report]
+    if not titles:
+        raise ValueError("no RegNetZ in the report: its five seeds are not all scored")
+    return _in_points(evaluation.stacked(report, titles))
 
 
 def table_vs_published(report) -> pd.DataFrame:
@@ -334,7 +431,10 @@ def figure_all_models(report) -> Figure:
     """Where every model stands: published versions, R-G-NIR models, 13-band models."""
     table = report["median per patch, per seed"]
     present = set(table.index.get_level_values(0))
-    groups = [[m for m in group if m in present] for group in (PUBLISHED, RGN, TRAINED)]
+    groups = [
+        [m for m in group if m in present]
+        for group in (PUBLISHED, RGN, TRAINED, (REGNETZ,))
+    ]
     return plots.plot_all_models(
         table, [g for g in groups if g], LABELS,
         "Median BOA per patch of every model, L1C test, R-G-NIR and 13 bands",
@@ -342,8 +442,14 @@ def figure_all_models(report) -> Figure:
     )
 
 
-def table_by_share(combined, models: Sequence[str] = SHARE_MODELS) -> pd.DataFrame:
+def share_models(combined) -> tuple[str, ...]:
+    """The models of the share figures: RegNetZ joins when it was scored."""
+    return SHARE_MODELS_WITH_REGNETZ if _has_regnetz(combined) else SHARE_MODELS
+
+
+def table_by_share(combined, models: Sequence[str] | None = None) -> pd.DataFrame:
     """Median BOA per patch (percent) of the chosen models in each range of class share."""
+    models = models or share_models(combined)
     table = evaluation.boa_by_share(combined)
     wide = (table["mean"] * 100).unstack("model")[list(models)].rename(columns=LABELS)
     wide.insert(0, "patches", table["n"].groupby(level=["experiment", "bin"]).first())
@@ -351,8 +457,11 @@ def table_by_share(combined, models: Sequence[str] = SHARE_MODELS) -> pd.DataFra
     return wide
 
 
-def figure_by_share(combined, experiment_name: str, models: Sequence[str] = SHARE_MODELS) -> Figure:
+def figure_by_share(
+    combined, experiment_name: str, models: Sequence[str] | None = None
+) -> Figure:
     """BOA of the chosen models per range of the experiment's class share."""
+    models = models or share_models(combined)
     table = evaluation.boa_by_share(combined).loc[experiment_name]
     return plots.plot_boa_by_share(
         table, list(models), LABELS,
